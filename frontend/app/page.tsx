@@ -14,21 +14,17 @@ import {
   ArrowUpRight,
   MapPin,
   Clock,
-  Buildings,
   Sparkle,
   TrendUp,
   Binoculars,
   PaperPlaneTilt,
   ChatsCircle,
   CheckCircle,
-  BookmarkSimple,
   CaretRight,
-  CalendarBlank,
   Robot,
   List,
   Kanban,
   X,
-  SlidersHorizontal,
 } from "@phosphor-icons/react";
 
 type Job = {
@@ -174,8 +170,8 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="min-h-screen lg:h-screen lg:overflow-hidden">
-      <div className="flex min-h-screen lg:h-full">
+    <div className="min-h-dvh lg:h-dvh lg:overflow-hidden">
+      <div className="flex min-h-dvh lg:h-full">
         <aside className="hidden w-64 shrink-0 flex-col bg-[#101323] text-white lg:flex">
           <div className="flex items-center gap-3 px-6 py-7">
             <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-violet-500 to-fuchsia-500">
@@ -250,8 +246,8 @@ export default function DashboardPage() {
         </aside>
 
         <main className="flex min-w-0 flex-1 flex-col lg:h-full lg:overflow-hidden">
-          <header className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200/70 bg-white px-5 py-5 sm:px-8 lg:px-10">
-            <div>
+          <header className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200/70 bg-white px-5 py-4 sm:px-8 sm:py-5 lg:px-10">
+            <div className="min-w-0">
               <div className="flex items-center gap-2">
                 <span className="text-xs font-semibold text-violet-600">
                   YOUR JOB SEARCH
@@ -265,13 +261,13 @@ export default function DashboardPage() {
                   ? "Your career dashboard"
                   : activePage}
               </h1>
-              <p className="mt-1 text-sm text-slate-500">
+              <p className="mt-1 hidden text-sm text-slate-500 sm:block">
                 Your next opportunity starts here.
               </p>
             </div>
 
-            <div className="flex items-center gap-2 sm:gap-3">
-              <label className="flex min-w-0 items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 focus-within:border-violet-300 sm:w-60">
+            <div className="flex w-full items-center gap-2 sm:w-auto sm:gap-3">
+              <label className="flex min-w-0 flex-1 items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 focus-within:border-violet-300 sm:w-60 sm:flex-none">
                 <MagnifyingGlass
                   size={18}
                   className="shrink-0 text-slate-400"
@@ -281,7 +277,7 @@ export default function DashboardPage() {
                   onChange={(event) => setSearch(event.target.value)}
                   placeholder="Search jobs..."
                   aria-label="Search jobs"
-                  className="w-full min-w-0 bg-transparent text-sm outline-none placeholder:text-slate-400"
+                  className="w-full min-w-0 bg-transparent text-base outline-none placeholder:text-slate-400 sm:text-sm"
                 />
                 {search && (
                   <button
@@ -320,27 +316,25 @@ export default function DashboardPage() {
           {notice && (
             <div
               role="status"
-              className="mx-5 mt-4 flex items-center justify-between rounded-xl border border-violet-100 bg-violet-50 px-4 py-3 text-sm text-violet-800 sm:mx-8 lg:mx-10"
+              className="mx-5 mt-4 flex items-center justify-between gap-3 rounded-xl border border-violet-100 bg-violet-50 px-4 py-3 text-sm text-violet-800 sm:mx-8 lg:mx-10"
             >
-              {notice}
+              <span className="min-w-0">{notice}</span>
               <button
                 onClick={() => setNotice("")}
                 aria-label="Dismiss notification"
+                className="shrink-0"
               >
                 <X size={16} />
               </button>
             </div>
           )}
 
-          <div className="custom-scrollbar flex-1 space-y-8 overflow-y-auto p-5 sm:p-8 lg:p-10">
+          <div className="custom-scrollbar flex-1 space-y-8 overflow-y-auto p-5 pb-24 sm:p-8 sm:pb-24 lg:p-10">
             {activePage !== "Dashboard" &&
               activePage !== "Job Matches" &&
               activePage !== "Applications" && (
-                <section className="rounded-2xl border border-slate-200 bg-white p-8">
-                  <Sparkle
-                    size={28}
-                    className="mb-4 text-violet-600"
-                  />
+                <section className="rounded-2xl border border-slate-200 bg-white p-6 sm:p-8">
+                  <Sparkle size={28} className="mb-4 text-violet-600" />
                   <h2 className="text-lg font-bold">{activePage}</h2>
                   <p className="mt-2 max-w-lg text-sm leading-6 text-slate-500">
                     This workspace section is planned but not connected yet.
@@ -359,30 +353,29 @@ export default function DashboardPage() {
             {(activePage === "Dashboard" ||
               activePage === "Applications") && (
               <>
-                <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                <section className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
                   {stats.map(({ label, value, delta, icon: Icon, style }) => (
                     <article
                       key={label}
-                      className="stat-card rounded-2xl border border-slate-200/80 bg-white p-5 sm:p-6"
+                      className="stat-card min-w-0 rounded-2xl border border-slate-200/80 bg-white p-4 sm:p-6"
                     >
                       <div className="flex items-center justify-between">
                         <div
-                          className={`flex h-11 w-11 items-center justify-center rounded-xl ${style}`}
+                          className={`flex h-10 w-10 items-center justify-center rounded-xl sm:h-11 sm:w-11 ${style}`}
                         >
                           <Icon size={22} weight="duotone" />
                         </div>
-                        <ArrowUpRight
-                          size={18}
-                          className="text-slate-300"
-                        />
+                        <ArrowUpRight size={18} className="text-slate-300" />
                       </div>
-                      <p className="mt-5 text-2xl font-extrabold tracking-tight text-slate-900">
+                      <p className="mt-4 text-xl font-extrabold tracking-tight text-slate-900 sm:mt-5 sm:text-2xl">
                         {value}
                       </p>
-                      <p className="mt-1 text-sm font-semibold text-slate-600">
+                      <p className="mt-1 truncate text-sm font-semibold text-slate-600">
                         {label}
                       </p>
-                      <p className="mt-2 text-xs text-slate-400">{delta}</p>
+                      <p className="mt-2 truncate text-xs text-slate-400">
+                        {delta}
+                      </p>
                     </article>
                   ))}
                 </section>
@@ -471,7 +464,7 @@ export default function DashboardPage() {
 
                             <button
                               onClick={() => saveJob(job.id)}
-                              className={`flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-bold transition ${
+                              className={`flex w-full items-center justify-center gap-1.5 rounded-xl px-3 py-2.5 text-xs font-bold transition sm:w-auto sm:py-2 ${
                                 job.status === "Applied"
                                   ? "bg-emerald-50 text-emerald-700"
                                   : "bg-violet-600 text-white hover:bg-violet-700"
@@ -490,7 +483,7 @@ export default function DashboardPage() {
                     </div>
                   </div>
 
-                  <article className="flex flex-col rounded-2xl bg-[#111426] p-6 text-white">
+                  <article className="flex flex-col rounded-2xl bg-[#111426] p-5 text-white sm:p-6">
                     <div className="flex items-center justify-between">
                       <div>
                         <p className="text-sm font-semibold text-slate-300">
@@ -505,7 +498,7 @@ export default function DashboardPage() {
                       </div>
                     </div>
 
-                    <div className="mt-8 flex h-36 items-end gap-3">
+                    <div className="mt-8 flex h-36 items-end gap-2 sm:gap-3">
                       {activity.map(({ day, height }, index) => (
                         <div
                           key={day}
@@ -559,10 +552,7 @@ export default function DashboardPage() {
                 <div className="flex flex-wrap items-end justify-between gap-4">
                   <div>
                     <h2 className="flex items-center gap-2 text-lg font-extrabold text-slate-900">
-                      <Briefcase
-                        size={21}
-                        className="text-violet-600"
-                      />
+                      <Briefcase size={21} className="text-violet-600" />
                       Application pipeline
                     </h2>
                     <p className="mt-1 text-sm text-slate-500">
@@ -595,16 +585,16 @@ export default function DashboardPage() {
                 </div>
 
                 {view === "board" ? (
-                  <div className="custom-scrollbar flex gap-4 overflow-x-auto pb-4">
+                  <div className="custom-scrollbar -mx-5 flex snap-x snap-mandatory gap-4 overflow-x-auto px-5 pb-4 sm:mx-0 sm:snap-none sm:px-0">
                     {columns.map((column) => {
-                      const columnJobs = jobs.filter(
+                      const columnJobs = filteredJobs.filter(
                         (job) => job.status === column.name,
                       );
 
                       return (
                         <div
                           key={column.name}
-                          className="kanban-column flex-1 space-y-3"
+                          className="kanban-column w-[80%] shrink-0 snap-start space-y-3 sm:w-auto sm:flex-1"
                         >
                           <div className="flex items-center justify-between px-1 py-2">
                             <div className="flex items-center gap-2">
@@ -624,7 +614,7 @@ export default function DashboardPage() {
                               title={`Add ${column.name.toLowerCase()} application`}
                               aria-label={`Add ${column.name.toLowerCase()} application`}
                               onClick={startApplication}
-                              className="text-slate-400 hover:text-violet-600"
+                              className="flex h-9 w-9 items-center justify-center text-slate-400 hover:text-violet-600"
                             >
                               <Plus size={19} />
                             </button>
@@ -655,14 +645,14 @@ export default function DashboardPage() {
                                     </p>
                                   </div>
                                 </div>
-                                <div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-3">
-                                  <span className="text-[10px] text-slate-400">
+                                <div className="mt-4 flex items-center justify-between gap-3 border-t border-slate-100 pt-3">
+                                  <span className="min-w-0 truncate text-[10px] text-slate-400">
                                     {job.location}
                                   </span>
                                   <button
                                     onClick={() => saveJob(job.id)}
                                     title="Move between Saved and Applied"
-                                    className="text-xs font-bold text-violet-600 hover:text-violet-800"
+                                    className="shrink-0 text-xs font-bold text-violet-600 hover:text-violet-800"
                                   >
                                     {job.status === "Saved"
                                       ? "Mark applied"
@@ -678,20 +668,30 @@ export default function DashboardPage() {
                   </div>
                 ) : (
                   <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white">
-                    <table className="w-full min-w-[620px] text-left text-sm">
+                    <table className="w-full min-w-[460px] text-left text-sm sm:min-w-[620px]">
                       <thead className="bg-slate-50 text-xs text-slate-500">
                         <tr>
-                          <th className="px-5 py-4 font-semibold">Position</th>
-                          <th className="px-5 py-4 font-semibold">Location</th>
-                          <th className="px-5 py-4 font-semibold">Match</th>
-                          <th className="px-5 py-4 font-semibold">Status</th>
-                          <th className="px-5 py-4 font-semibold">Action</th>
+                          <th className="px-4 py-4 font-semibold sm:px-5">
+                            Position
+                          </th>
+                          <th className="hidden px-5 py-4 font-semibold sm:table-cell">
+                            Location
+                          </th>
+                          <th className="px-4 py-4 font-semibold sm:px-5">
+                            Match
+                          </th>
+                          <th className="px-4 py-4 font-semibold sm:px-5">
+                            Status
+                          </th>
+                          <th className="px-4 py-4 font-semibold sm:px-5">
+                            Action
+                          </th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
                         {filteredJobs.map((job) => (
                           <tr key={job.id}>
-                            <td className="px-5 py-4">
+                            <td className="px-4 py-4 sm:px-5">
                               <p className="font-semibold text-slate-800">
                                 {job.title}
                               </p>
@@ -699,19 +699,19 @@ export default function DashboardPage() {
                                 {job.company}
                               </p>
                             </td>
-                            <td className="px-5 py-4 text-slate-600">
+                            <td className="hidden px-5 py-4 text-slate-600 sm:table-cell">
                               {job.location}
                             </td>
-                            <td className="px-5 py-4 font-semibold text-emerald-700">
+                            <td className="px-4 py-4 font-semibold text-emerald-700 sm:px-5">
                               {job.match}%
                             </td>
-                            <td className="px-5 py-4 text-slate-600">
+                            <td className="px-4 py-4 text-slate-600 sm:px-5">
                               {job.status}
                             </td>
-                            <td className="px-5 py-4">
+                            <td className="px-4 py-4 sm:px-5">
                               <button
                                 onClick={() => saveJob(job.id)}
-                                className="font-semibold text-violet-600"
+                                className="font-semibold whitespace-nowrap text-violet-600"
                               >
                                 {job.status === "Saved"
                                   ? "Mark applied"
@@ -734,6 +734,34 @@ export default function DashboardPage() {
           </div>
         </main>
       </div>
+
+      <nav
+        aria-label="Primary"
+        className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-5 border-t border-slate-200 bg-white/95 pb-[env(safe-area-inset-bottom)] backdrop-blur lg:hidden"
+      >
+        {navItems.map(({ label, icon: Icon, badge }) => {
+          const active = activePage === label;
+
+          return (
+            <button
+              key={label}
+              onClick={() => setActivePage(label)}
+              aria-current={active ? "page" : undefined}
+              className={`relative flex min-h-14 flex-col items-center justify-center gap-1 px-1 text-[10px] font-semibold ${
+                active ? "text-violet-600" : "text-slate-500"
+              }`}
+            >
+              <Icon size={22} weight={active ? "fill" : "duotone"} />
+              <span className="max-w-full truncate">
+                {label.replace("My ", "").replace("Job ", "")}
+              </span>
+              {badge && (
+                <span className="absolute right-[calc(50%-20px)] top-2 h-2 w-2 rounded-full bg-violet-500" />
+              )}
+            </button>
+          );
+        })}
+      </nav>
     </div>
   );
 }
