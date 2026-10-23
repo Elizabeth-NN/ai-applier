@@ -27,6 +27,7 @@ import {
   X,
 } from "@phosphor-icons/react";
 import Navbar from "@/components/Navbar";
+import BackendAuthCheck from "@/components/BackendAuthCheck";
 
 type Job = {
   id: number;
@@ -249,6 +250,9 @@ export default function DashboardPage() {
         </aside>
 
         <main className="flex min-w-0 flex-1 flex-col lg:h-full lg:overflow-hidden">
+          <div className="px-5 pt-5 sm:px-8 lg:px-10">
+            <BackendAuthCheck />
+          </div>
           <header className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200/70 bg-white px-5 py-4 sm:px-8 sm:py-5 lg:px-10">
             <div className="min-w-0">
               <div className="flex items-center gap-2">

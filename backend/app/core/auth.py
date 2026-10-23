@@ -1,0 +1,44 @@
+
+from app.core.config import settings
+from typing import Annotated
+
+from clerk_backend_api import (
+    AuthenticateRequestOptions,
+    authenticate_request,
+)
+from fastapi import Depends, HTTPException, Request, status
+
+
+def require_user(request: Request) -> str:
+    """Verify a Clerk session and return the authenticated Clerk user ID."""
+    secret_key = settings.clerk_secret_key
+
+    state = authenticate_request(
+        request,
+        AuthenticateRequestOptions(
+            secret_key=secret_key,
+            authorized_parties=["http://localhost:3000"],
+            accepts_token=["session_token"],
+        ),
+    )
+
+    if not state.is_signed_in:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    user_id = state.payload.get("sub") if state.payload else None
+
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication token",
+        )
+
+    return user_id
+
+
+CurrentUser = Annotated[str, Depends(require_user)]
+

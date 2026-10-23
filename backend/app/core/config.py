@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     db_name: str = "ai_applier"
     db_user: str = "ai_applier_user"
     db_password: str
+    clerk_secret_key: str
 
     model_config = SettingsConfigDict(
         env_file=Path(__file__).resolve().parents[2] / ".env",
