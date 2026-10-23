@@ -21,7 +21,7 @@ import {
   ChatsCircle,
   CheckCircle,
   CaretRight,
-  Robot,
+
   List,
   Kanban,
   X,

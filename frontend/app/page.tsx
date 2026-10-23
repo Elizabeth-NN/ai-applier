@@ -1,5 +1,6 @@
-
 "use client";
+
+import Link from "next/link";
 
 import { useState } from "react";
 import {
@@ -7,7 +8,7 @@ import {
   ArrowRight,
   Briefcase,
   Check,
-  CircleNotch,
+
   FileText,
   FunnelSimple,
   MagnifyingGlass,
@@ -20,11 +21,6 @@ import {
 
 import Navbar from "@/components/Navbar";
 
-const navigation = [
-  { label: "Features", href: "#features" },
-  { label: "How it works", href: "#how-it-works" },
-  { label: "Pricing", href: "#pricing" },
-] as const;
 
 const features = [
   {
@@ -143,7 +139,7 @@ const plans = [
 
 function Logo() {
   return (
-    <a
+    <Link
       href="/"
       aria-label="AI Applier home"
       className="group inline-flex items-center gap-2.5"
@@ -154,7 +150,7 @@ function Logo() {
       <span className="font-display text-xl font-extrabold tracking-tight">
         AI<span className="text-violet">Applier</span>
       </span>
-    </a>
+    </Link>
   );
 }
 
