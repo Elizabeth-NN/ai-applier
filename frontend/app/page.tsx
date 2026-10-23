@@ -1,767 +1,288 @@
 "use client";
-
-import { useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import {
-  SquaresFour,
-  Lightning,
-  Files,
-  Briefcase,
-  ChartPieSlice,
-  GearSix,
-  MagnifyingGlass,
-  Bell,
-  Plus,
-  ArrowUpRight,
-  MapPin,
-  Clock,
-  Sparkle,
-  TrendUp,
-  Binoculars,
-  PaperPlaneTilt,
-  ChatsCircle,
-  CheckCircle,
-  CaretRight,
-  Robot,
-  List,
-  Kanban,
-  X,
+  RocketLaunch, ArrowRight, Check, MagnifyingGlass, FileText, PaperPlaneTilt,
+  CalendarCheck, XLogo, LinkedinLogo, InstagramLogo, YoutubeLogo,
 } from "@phosphor-icons/react";
 
-type Job = {
-  id: number;
-  company: string;
-  title: string;
-  location: string;
-  match: number;
-  age: string;
-  color: string;
-  letter: string;
-  status: "Saved" | "Applied" | "Interview" | "Offer";
+const navLinks = [["Features", "#how"], ["How it works", "#how"], ["Pricing", "#pricing"], ["Enterprise", "#pricing"]];
+
+const feed = [
+  { Icon: MagnifyingGlass, text: "Found 14 new roles matching your profile", meta: "Scanned 52 job boards" },
+  { Icon: FileText, text: "Tailored your resume for Senior Product Designer", meta: "Highlighted 6 matching skills" },
+  { Icon: PaperPlaneTilt, text: "Sent application to Northwind Labs", meta: "98% match" },
+  { Icon: CalendarCheck, text: "Interview request from Fieldnote", meta: "Pick a time by Friday" },
+  { Icon: MagnifyingGlass, text: "Found 9 new remote roles", meta: "Scanned 52 job boards" },
+  { Icon: PaperPlaneTilt, text: "Sent application to Lumen Health", meta: "94% match" },
+];
+
+const steps = [
+  ["Tell it what you want", "Upload your resume and set your target roles, salary range and locations."],
+  ["Your agent does the legwork", "It scans boards daily, tailors your resume and cover letter, and applies to roles that fit."],
+  ["You show up to interviews", "Replies land in one inbox. You approve, reschedule or pass."],
+];
+
+type Plan = {
+  name: string;
+  tagline: string;
+  monthly?: number;
+  yearly?: number;
+  custom?: boolean;
+  features: string[];
+  cta: string;
+  featured?: boolean;
 };
 
-const initialJobs: Job[] = [
+const plans: Plan[] = [
   {
-    id: 1,
-    company: "Stripe",
-    title: "Junior Software Engineer",
-    location: "Remote",
-    match: 96,
-    age: "2 hours ago",
-    color: "bg-indigo-50 text-indigo-700",
-    letter: "S",
-    status: "Saved",
+    name: "Starter",
+    tagline: "Try it with a few applications",
+    monthly: 0,
+    features: [
+      "Job application tracking",
+      "Basic job matching",
+      "One resume profile",
+    ],
+    cta: "Start free",
   },
   {
-    id: 2,
-    company: "GitLab",
-    title: "Associate Backend Engineer",
-    location: "Remote · Global",
-    match: 92,
-    age: "5 hours ago",
-    color: "bg-orange-50 text-orange-700",
-    letter: "G",
-    status: "Saved",
+    name: "Pro",
+    tagline: "For an active job search",
+    monthly: 19,
+    yearly: 15,
+    features: [
+      "Advanced job-search organization",
+      "Resume and cover letter assistance",
+      "Application tracking",
+      "Interview preparation",
+    ],
+    cta: "Upgrade to Pro",
+    featured: true,
   },
   {
-    id: 3,
-    company: "Canva",
-    title: "Graduate Software Developer",
-    location: "Remote · Selected regions",
-    match: 88,
-    age: "Yesterday",
-    color: "bg-teal-50 text-teal-700",
-    letter: "C",
-    status: "Saved",
-  },
-];
-
-const navItems = [
-  { label: "Dashboard", icon: SquaresFour },
-  { label: "Job Matches", icon: Lightning, badge: "3" },
-  { label: "My Documents", icon: Files },
-  { label: "Applications", icon: Briefcase },
-  { label: "Insights", icon: ChartPieSlice },
-];
-
-const stats = [
-  {
-    label: "Jobs matched",
-    value: "128",
-    delta: "This month",
-    icon: Binoculars,
-    style: "bg-indigo-50 text-indigo-600",
-  },
-  {
-    label: "Applications",
-    value: "24",
-    delta: "6 pending review",
-    icon: PaperPlaneTilt,
-    style: "bg-violet-50 text-violet-600",
-  },
-  {
-    label: "Interviews",
-    value: "4",
-    delta: "2 upcoming",
-    icon: ChatsCircle,
-    style: "bg-amber-50 text-amber-600",
-  },
-  {
-    label: "Response rate",
-    value: "16.7%",
-    delta: "Based on demo data",
-    icon: ChartPieSlice,
-    style: "bg-emerald-50 text-emerald-600",
+    name: "Enterprise",
+    tagline: "For teams and universities",
+    custom: true,
+    features: [
+      "Team management",
+      "Centralized application tracking",
+      "Custom integrations",
+    ],
+    cta: "Contact sales",
   },
 ];
-
-const columns = [
-  { name: "Saved", color: "text-slate-500", dot: "bg-slate-400" },
-  { name: "Applied", color: "text-violet-600", dot: "bg-violet-500" },
-  { name: "Interview", color: "text-amber-600", dot: "bg-amber-500" },
-  { name: "Offer", color: "text-emerald-600", dot: "bg-emerald-500" },
+const footerColumns = [
+  ["Product", ["Features", "How it works", "Pricing", "Enterprise"]],
+  ["Company", ["About", "Careers", "Blog", "Press"]],
+  ["Resources", ["Help center", "Resume templates", "Privacy policy", "Terms of service"]],
 ] as const;
 
-const activity = [
-  { day: "Mon", height: 35 },
-  { day: "Tue", height: 55 },
-  { day: "Wed", height: 42 },
-  { day: "Thu", height: 75 },
-  { day: "Fri", height: 92 },
-  { day: "Sat", height: 48 },
-  { day: "Sun", height: 65 },
-];
+const Logo = () => (
+  <a href="#" className="flex items-center gap-2.5 font-display text-xl font-bold tracking-tight text-ink">
+    <span className="grid h-9 w-9 place-items-center rounded-lg bg-violet text-white"><RocketLaunch weight="fill" className="h-5 w-5" /></span>
+    AIApplier
+  </a>
+);
 
-export default function DashboardPage() {
-  const [activePage, setActivePage] = useState("Dashboard");
-  const [search, setSearch] = useState("");
-  const [view, setView] = useState<"board" | "list">("board");
-  const [jobs, setJobs] = useState(initialJobs);
-  const [notice, setNotice] = useState("");
-
-  const filteredJobs = useMemo(() => {
-    const term = search.trim().toLowerCase();
-
-    return jobs.filter((job) =>
-      `${job.title} ${job.company} ${job.location}`
-        .toLowerCase()
-        .includes(term),
-    );
-  }, [jobs, search]);
-
-  function saveJob(jobId: number) {
-    setJobs((current) =>
-      current.map((job) =>
-        job.id === jobId
-          ? {
-              ...job,
-              status: job.status === "Saved" ? "Applied" : "Saved",
-            }
-          : job,
-      ),
-    );
-    setNotice("Application status updated.");
-    window.setTimeout(() => setNotice(""), 2500);
-  }
-
-  function startApplication() {
-    setActivePage("Job Matches");
-    setNotice("Choose a matching job to start your application.");
-    window.setTimeout(() => setNotice(""), 3000);
-  }
-
+export default function AIApplierLanding() {
   return (
-    <div className="min-h-dvh lg:h-dvh lg:overflow-hidden">
-      <div className="flex min-h-dvh lg:h-full">
-        <aside className="hidden w-64 shrink-0 flex-col bg-[#101323] text-white lg:flex">
-          <div className="flex items-center gap-3 px-6 py-7">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-violet-500 to-fuchsia-500">
-              <Robot size={23} weight="fill" />
-            </div>
-            <div>
-              <p className="text-lg font-extrabold tracking-tight">
-                ai-applier
-              </p>
-              <p className="text-[10px] tracking-[0.18em] text-slate-400 uppercase">
-                Career workspace
-              </p>
-            </div>
-          </div>
-
-          <div className="mx-4 mb-7 rounded-2xl border border-white/10 bg-white/[0.04] p-4">
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-violet-500/20 text-sm font-bold text-violet-200">
-                JD
-              </div>
-              <div className="min-w-0">
-                <p className="truncate text-sm font-semibold">Your profile</p>
-                <p className="mt-1 text-xs text-slate-400">Free workspace</p>
-              </div>
-            </div>
-          </div>
-
-          <p className="px-6 pb-3 text-[10px] font-bold tracking-[0.18em] text-slate-500 uppercase">
-            Workspace
-          </p>
-
-          <nav className="flex-1 space-y-1 px-3">
-            {navItems.map(({ label, icon: Icon, badge }) => (
-              <button
-                key={label}
-                onClick={() => setActivePage(label)}
-                className={`flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left text-sm transition ${
-                  activePage === label
-                    ? "sidebar-active font-semibold"
-                    : "text-slate-400 hover:bg-white/5 hover:text-white"
-                }`}
-              >
-                <Icon size={20} weight="duotone" />
-                <span className="flex-1">{label}</span>
-                {badge && (
-                  <span className="rounded-md bg-violet-500/20 px-2 py-0.5 text-[10px] font-bold text-violet-300">
-                    {badge}
-                  </span>
-                )}
-              </button>
-            ))}
-          </nav>
-
-          <div className="m-4 rounded-2xl border border-white/10 bg-gradient-to-br from-violet-500/15 to-transparent p-4">
-            <div className="mb-3 flex items-center gap-2">
-              <span className="h-2 w-2 rounded-full bg-emerald-400" />
-              <span className="text-xs font-semibold text-slate-200">
-                AI workspace ready
-              </span>
-            </div>
-            <p className="text-xs leading-relaxed text-slate-400">
-              Connect your profile to get personalized job recommendations.
-            </p>
-            <button
-              onClick={() => setActivePage("Settings")}
-              className="mt-4 flex items-center gap-2 text-xs font-bold text-violet-300 hover:text-white"
-            >
-              <GearSix size={16} />
-              Configure preferences
-            </button>
-          </div>
-        </aside>
-
-        <main className="flex min-w-0 flex-1 flex-col lg:h-full lg:overflow-hidden">
-          <header className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200/70 bg-white px-5 py-4 sm:px-8 sm:py-5 lg:px-10">
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-semibold text-violet-600">
-                  YOUR JOB SEARCH
-                </span>
-                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-500">
-                  Demo
-                </span>
-              </div>
-              <h1 className="mt-2 text-xl font-extrabold tracking-tight text-slate-900 sm:text-2xl">
-                {activePage === "Dashboard"
-                  ? "Your career dashboard"
-                  : activePage}
-              </h1>
-              <p className="mt-1 hidden text-sm text-slate-500 sm:block">
-                Your next opportunity starts here.
-              </p>
-            </div>
-
-            <div className="flex w-full items-center gap-2 sm:w-auto sm:gap-3">
-              <label className="flex min-w-0 flex-1 items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 focus-within:border-violet-300 sm:w-60 sm:flex-none">
-                <MagnifyingGlass
-                  size={18}
-                  className="shrink-0 text-slate-400"
-                />
-                <input
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Search jobs..."
-                  aria-label="Search jobs"
-                  className="w-full min-w-0 bg-transparent text-base outline-none placeholder:text-slate-400 sm:text-sm"
-                />
-                {search && (
-                  <button
-                    onClick={() => setSearch("")}
-                    aria-label="Clear search"
-                    className="text-slate-400 hover:text-slate-700"
-                  >
-                    <X size={15} />
-                  </button>
-                )}
-              </label>
-
-              <button
-                aria-label="Notifications"
-                title="Notifications"
-                onClick={() =>
-                  setNotice("You are all caught up on notifications.")
-                }
-                className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-              >
-                <Bell size={19} />
-                <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-violet-500 ring-2 ring-white" />
-              </button>
-
-              <button
-                onClick={startApplication}
-                className="flex shrink-0 items-center gap-2 rounded-xl bg-violet-600 px-3 py-2.5 text-sm font-semibold text-white shadow-sm shadow-violet-200 transition hover:bg-violet-700 sm:px-4"
-              >
-                <Plus size={18} />
-                <span className="hidden sm:inline">New application</span>
-                <span className="sm:hidden">New</span>
-              </button>
-            </div>
-          </header>
-
-          {notice && (
-            <div
-              role="status"
-              className="mx-5 mt-4 flex items-center justify-between gap-3 rounded-xl border border-violet-100 bg-violet-50 px-4 py-3 text-sm text-violet-800 sm:mx-8 lg:mx-10"
-            >
-              <span className="min-w-0">{notice}</span>
-              <button
-                onClick={() => setNotice("")}
-                aria-label="Dismiss notification"
-                className="shrink-0"
-              >
-                <X size={16} />
-              </button>
-            </div>
-          )}
-
-          <div className="custom-scrollbar flex-1 space-y-8 overflow-y-auto p-5 pb-24 sm:p-8 sm:pb-24 lg:p-10">
-            {activePage !== "Dashboard" &&
-              activePage !== "Job Matches" &&
-              activePage !== "Applications" && (
-                <section className="rounded-2xl border border-slate-200 bg-white p-6 sm:p-8">
-                  <Sparkle size={28} className="mb-4 text-violet-600" />
-                  <h2 className="text-lg font-bold">{activePage}</h2>
-                  <p className="mt-2 max-w-lg text-sm leading-6 text-slate-500">
-                    This workspace section is planned but not connected yet.
-                    Your dashboard and job-matching interactions are available
-                    to explore.
-                  </p>
-                  <button
-                    onClick={() => setActivePage("Dashboard")}
-                    className="mt-5 text-sm font-bold text-violet-600 hover:text-violet-800"
-                  >
-                    Back to dashboard
-                  </button>
-                </section>
-              )}
-
-            {(activePage === "Dashboard" ||
-              activePage === "Applications") && (
-              <>
-                <section className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
-                  {stats.map(({ label, value, delta, icon: Icon, style }) => (
-                    <article
-                      key={label}
-                      className="stat-card min-w-0 rounded-2xl border border-slate-200/80 bg-white p-4 sm:p-6"
-                    >
-                      <div className="flex items-center justify-between">
-                        <div
-                          className={`flex h-10 w-10 items-center justify-center rounded-xl sm:h-11 sm:w-11 ${style}`}
-                        >
-                          <Icon size={22} weight="duotone" />
-                        </div>
-                        <ArrowUpRight size={18} className="text-slate-300" />
-                      </div>
-                      <p className="mt-4 text-xl font-extrabold tracking-tight text-slate-900 sm:mt-5 sm:text-2xl">
-                        {value}
-                      </p>
-                      <p className="mt-1 truncate text-sm font-semibold text-slate-600">
-                        {label}
-                      </p>
-                      <p className="mt-2 truncate text-xs text-slate-400">
-                        {delta}
-                      </p>
-                    </article>
-                  ))}
-                </section>
-
-                <section className="grid grid-cols-1 gap-6 xl:grid-cols-3">
-                  <div className="space-y-4 xl:col-span-2">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div>
-                        <h2 className="flex items-center gap-2 text-lg font-extrabold text-slate-900">
-                          <Sparkle
-                            size={21}
-                            weight="fill"
-                            className="text-violet-600"
-                          />
-                          AI job matches
-                        </h2>
-                        <p className="mt-1 text-sm text-slate-500">
-                          Opportunities selected for your profile
-                        </p>
-                      </div>
-                      <button
-                        onClick={() => setActivePage("Job Matches")}
-                        className="flex items-center gap-1 text-sm font-bold text-violet-600 hover:text-violet-800"
-                      >
-                        All matches <CaretRight size={16} />
-                      </button>
-                    </div>
-
-                    <div className="space-y-3">
-                      {filteredJobs.length === 0 && (
-                        <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center">
-                          <MagnifyingGlass
-                            size={28}
-                            className="mx-auto text-slate-400"
-                          />
-                          <p className="mt-3 font-semibold text-slate-800">
-                            No matching jobs
-                          </p>
-                          <p className="mt-1 text-sm text-slate-500">
-                            Try another title or company.
-                          </p>
-                        </div>
-                      )}
-
-                      {filteredJobs.map((job) => (
-                        <article
-                          key={job.id}
-                          className="rounded-2xl border border-slate-200/80 bg-white p-4 transition hover:border-violet-200 sm:p-5"
-                        >
-                          <div className="flex flex-wrap items-start gap-3">
-                            <div
-                              className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl text-lg font-extrabold ${job.color}`}
-                            >
-                              {job.letter}
-                            </div>
-
-                            <div className="min-w-0 flex-1">
-                              <div className="flex flex-wrap items-center gap-2">
-                                <h3 className="font-bold text-slate-900">
-                                  {job.title}
-                                </h3>
-                                <span
-                                  className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${
-                                    job.match >= 90
-                                      ? "bg-emerald-50 text-emerald-700"
-                                      : "bg-amber-50 text-amber-700"
-                                  }`}
-                                >
-                                  {job.match}% match
-                                </span>
-                              </div>
-                              <p className="mt-1 text-sm text-slate-600">
-                                {job.company}
-                              </p>
-                              <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-slate-500">
-                                <span className="flex items-center gap-1.5">
-                                  <MapPin size={14} />
-                                  {job.location}
-                                </span>
-                                <span className="flex items-center gap-1.5">
-                                  <Clock size={14} />
-                                  {job.age}
-                                </span>
-                              </div>
-                            </div>
-
-                            <button
-                              onClick={() => saveJob(job.id)}
-                              className={`flex w-full items-center justify-center gap-1.5 rounded-xl px-3 py-2.5 text-xs font-bold transition sm:w-auto sm:py-2 ${
-                                job.status === "Applied"
-                                  ? "bg-emerald-50 text-emerald-700"
-                                  : "bg-violet-600 text-white hover:bg-violet-700"
-                              }`}
-                            >
-                              {job.status === "Applied" ? (
-                                <CheckCircle size={15} />
-                              ) : (
-                                <PaperPlaneTilt size={15} />
-                              )}
-                              {job.status === "Applied" ? "Applied" : "Apply"}
-                            </button>
-                          </div>
-                        </article>
-                      ))}
-                    </div>
-                  </div>
-
-                  <article className="flex flex-col rounded-2xl bg-[#111426] p-5 text-white sm:p-6">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm font-semibold text-slate-300">
-                          Weekly activity
-                        </p>
-                        <p className="mt-1 text-xs text-slate-500">
-                          Illustrative demo data
-                        </p>
-                      </div>
-                      <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-500/15 text-violet-300">
-                        <TrendUp size={21} />
-                      </div>
-                    </div>
-
-                    <div className="mt-8 flex h-36 items-end gap-2 sm:gap-3">
-                      {activity.map(({ day, height }, index) => (
-                        <div
-                          key={day}
-                          className="flex h-full flex-1 flex-col items-center justify-end gap-3"
-                        >
-                          <div
-                            title={`${day}: ${height}% illustration`}
-                            className={`w-full rounded-t-md transition-opacity hover:opacity-70 ${
-                              index === 4
-                                ? "bg-gradient-to-t from-violet-700 to-fuchsia-400"
-                                : "bg-slate-700"
-                            }`}
-                            style={{ height: `${height}%` }}
-                          />
-                          <span className="text-[10px] text-slate-500">
-                            {day}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-
-                    <div className="mt-7 border-t border-white/10 pt-5">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-xs text-slate-400">
-                            Applications tracked
-                          </p>
-                          <p className="mt-2 text-2xl font-extrabold">24</p>
-                        </div>
-                        <div className="rounded-xl bg-emerald-500/10 p-3 text-emerald-400">
-                          <TrendUp size={23} />
-                        </div>
-                      </div>
-                    </div>
-
-                    <button
-                      onClick={() => setActivePage("Insights")}
-                      className="mt-6 flex items-center justify-center gap-2 rounded-xl border border-white/10 py-3 text-sm font-semibold text-slate-200 transition hover:bg-white/5"
-                    >
-                      View insights <ArrowUpRight size={17} />
-                    </button>
-                  </article>
-                </section>
-              </>
-            )}
-
-            {(activePage === "Dashboard" ||
-              activePage === "Applications" ||
-              activePage === "Job Matches") && (
-              <section className="space-y-4 pb-5">
-                <div className="flex flex-wrap items-end justify-between gap-4">
-                  <div>
-                    <h2 className="flex items-center gap-2 text-lg font-extrabold text-slate-900">
-                      <Briefcase size={21} className="text-violet-600" />
-                      Application pipeline
-                    </h2>
-                    <p className="mt-1 text-sm text-slate-500">
-                      Keep track of every opportunity in one place.
-                    </p>
-                  </div>
-
-                  <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white p-1">
-                    <button
-                      onClick={() => setView("board")}
-                      className={`flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold ${
-                        view === "board"
-                          ? "bg-slate-100 text-slate-900"
-                          : "text-slate-500 hover:text-slate-900"
-                      }`}
-                    >
-                      <Kanban size={16} /> Board
-                    </button>
-                    <button
-                      onClick={() => setView("list")}
-                      className={`flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold ${
-                        view === "list"
-                          ? "bg-slate-100 text-slate-900"
-                          : "text-slate-500 hover:text-slate-900"
-                      }`}
-                    >
-                      <List size={16} /> List
-                    </button>
-                  </div>
-                </div>
-
-                {view === "board" ? (
-                  <div className="custom-scrollbar -mx-5 flex snap-x snap-mandatory gap-4 overflow-x-auto px-5 pb-4 sm:mx-0 sm:snap-none sm:px-0">
-                    {columns.map((column) => {
-                      const columnJobs = filteredJobs.filter(
-                        (job) => job.status === column.name,
-                      );
-
-                      return (
-                        <div
-                          key={column.name}
-                          className="kanban-column w-[80%] shrink-0 snap-start space-y-3 sm:w-auto sm:flex-1"
-                        >
-                          <div className="flex items-center justify-between px-1 py-2">
-                            <div className="flex items-center gap-2">
-                              <span
-                                className={`h-2 w-2 rounded-full ${column.dot}`}
-                              />
-                              <span
-                                className={`text-xs font-bold ${column.color}`}
-                              >
-                                {column.name}
-                              </span>
-                              <span className="rounded-md bg-slate-200/70 px-1.5 py-0.5 text-[10px] font-semibold text-slate-500">
-                                {columnJobs.length}
-                              </span>
-                            </div>
-                            <button
-                              title={`Add ${column.name.toLowerCase()} application`}
-                              aria-label={`Add ${column.name.toLowerCase()} application`}
-                              onClick={startApplication}
-                              className="flex h-9 w-9 items-center justify-center text-slate-400 hover:text-violet-600"
-                            >
-                              <Plus size={19} />
-                            </button>
-                          </div>
-
-                          {columnJobs.length === 0 ? (
-                            <div className="rounded-2xl border border-dashed border-slate-200 bg-white/60 p-5 text-center text-xs text-slate-400">
-                              No applications here yet
-                            </div>
-                          ) : (
-                            columnJobs.map((job) => (
-                              <article
-                                key={job.id}
-                                className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm"
-                              >
-                                <div className="flex items-start gap-3">
-                                  <div
-                                    className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-sm font-extrabold ${job.color}`}
-                                  >
-                                    {job.letter}
-                                  </div>
-                                  <div className="min-w-0">
-                                    <h3 className="text-sm font-bold text-slate-800">
-                                      {job.title}
-                                    </h3>
-                                    <p className="mt-1 text-xs text-slate-500">
-                                      {job.company}
-                                    </p>
-                                  </div>
-                                </div>
-                                <div className="mt-4 flex items-center justify-between gap-3 border-t border-slate-100 pt-3">
-                                  <span className="min-w-0 truncate text-[10px] text-slate-400">
-                                    {job.location}
-                                  </span>
-                                  <button
-                                    onClick={() => saveJob(job.id)}
-                                    title="Move between Saved and Applied"
-                                    className="shrink-0 text-xs font-bold text-violet-600 hover:text-violet-800"
-                                  >
-                                    {job.status === "Saved"
-                                      ? "Mark applied"
-                                      : "Undo"}
-                                  </button>
-                                </div>
-                              </article>
-                            ))
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white">
-                    <table className="w-full min-w-[460px] text-left text-sm sm:min-w-[620px]">
-                      <thead className="bg-slate-50 text-xs text-slate-500">
-                        <tr>
-                          <th className="px-4 py-4 font-semibold sm:px-5">
-                            Position
-                          </th>
-                          <th className="hidden px-5 py-4 font-semibold sm:table-cell">
-                            Location
-                          </th>
-                          <th className="px-4 py-4 font-semibold sm:px-5">
-                            Match
-                          </th>
-                          <th className="px-4 py-4 font-semibold sm:px-5">
-                            Status
-                          </th>
-                          <th className="px-4 py-4 font-semibold sm:px-5">
-                            Action
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {filteredJobs.map((job) => (
-                          <tr key={job.id}>
-                            <td className="px-4 py-4 sm:px-5">
-                              <p className="font-semibold text-slate-800">
-                                {job.title}
-                              </p>
-                              <p className="mt-1 text-xs text-slate-500">
-                                {job.company}
-                              </p>
-                            </td>
-                            <td className="hidden px-5 py-4 text-slate-600 sm:table-cell">
-                              {job.location}
-                            </td>
-                            <td className="px-4 py-4 font-semibold text-emerald-700 sm:px-5">
-                              {job.match}%
-                            </td>
-                            <td className="px-4 py-4 text-slate-600 sm:px-5">
-                              {job.status}
-                            </td>
-                            <td className="px-4 py-4 sm:px-5">
-                              <button
-                                onClick={() => saveJob(job.id)}
-                                className="font-semibold whitespace-nowrap text-violet-600"
-                              >
-                                {job.status === "Saved"
-                                  ? "Mark applied"
-                                  : "Undo"}
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </section>
-            )}
-
-            <footer className="border-t border-slate-200 py-5 text-xs text-slate-400">
-              AI Applier · Your job search, organized. All current dashboard
-              metrics and job listings are illustrative demo data.
-            </footer>
-          </div>
-        </main>
-      </div>
-
-      <nav
-        aria-label="Primary"
-        className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-5 border-t border-slate-200 bg-white/95 pb-[env(safe-area-inset-bottom)] backdrop-blur lg:hidden"
-      >
-        {navItems.map(({ label, icon: Icon, badge }) => {
-          const active = activePage === label;
-
-          return (
-            <button
-              key={label}
-              onClick={() => setActivePage(label)}
-              aria-current={active ? "page" : undefined}
-              className={`relative flex min-h-14 flex-col items-center justify-center gap-1 px-1 text-[10px] font-semibold ${
-                active ? "text-violet-600" : "text-slate-500"
-              }`}
-            >
-              <Icon size={22} weight={active ? "fill" : "duotone"} />
-              <span className="max-w-full truncate">
-                {label.replace("My ", "").replace("Job ", "")}
-              </span>
-              {badge && (
-                <span className="absolute right-[calc(50%-20px)] top-2 h-2 w-2 rounded-full bg-violet-500" />
-              )}
-            </button>
-          );
-        })}
-      </nav>
+    <div className="min-h-screen bg-paper text-ink">
+      <Nav /><Hero /><Proof /><HowItWorks /><Pricing /><Footer />
     </div>
+  );
+}
+
+function Nav() {
+  return (
+    <nav className="fixed inset-x-0 top-0 z-50 h-16 border-b border-ink/10 bg-paper/80 backdrop-blur-md">
+      <div className="mx-auto flex h-full max-w-6xl items-center justify-between px-6">
+        <Logo />
+        <div className="hidden items-center gap-8 md:flex">
+          {navLinks.map(([l, h]) => <a key={l} href={h} className="text-sm font-semibold text-ink/70 hover:text-violet">{l}</a>)}
+        </div>
+        <div className="flex items-center gap-2">
+          <button className="hidden px-4 py-2 text-sm font-semibold text-ink/70 hover:text-violet sm:block">Log in</button>
+          <button className="btn rounded-lg bg-violet px-4 py-2 text-sm font-semibold text-white">Start free</button>
+        </div>
+      </div>
+    </nav>
+  );
+}
+
+function Hero() {
+  return (
+    <section className="px-6 pb-20 pt-32 md:pt-40">
+      <div className="mx-auto grid max-w-6xl items-center gap-14 lg:grid-cols-[1.1fr_1fr]">
+        <div>
+          <h1 className="font-display text-5xl font-extrabold leading-[1.02] tracking-tight sm:text-6xl lg:text-7xl">
+            Apply to 200 jobs this week. Interview for the 10 that fit.
+          </h1>
+          <p className="mt-6 max-w-lg text-lg leading-relaxed text-ink/65">
+            AIApplier finds roles, tailors your resume and cover letter for each one, and sends the application while you get on with your day.
+          </p>
+          <div className="mt-9 flex flex-wrap gap-3">
+            <button className="btn flex items-center gap-2 rounded-xl bg-violet px-6 py-3.5 text-base font-semibold text-white">
+              Hire your AI agent <ArrowRight weight="bold" className="h-4 w-4" />
+            </button>
+            <a href="#how" className="rounded-xl border border-ink/15 px-6 py-3.5 text-base font-semibold hover:bg-ink/5">See how it works</a>
+          </div>
+          <p className="mt-6 text-sm text-ink/55">Free plan, no card needed. Rated 4.8 by 12,000+ job seekers.</p>
+        </div>
+        <AgentFeed />
+      </div>
+    </section>
+  );
+}
+
+function AgentFeed() {
+  const [n, setN] = useState(0);
+  useEffect(() => {
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const t = setInterval(() => setN((v) => v + 1), 3000);
+    return () => clearInterval(t);
+  }, []);
+  const items = [3, 2, 1, 0].map((k) => ({ ...feed[(n + 3 - k + feed.length * 10) % feed.length], key: n - k }));
+  return (
+    <div className="rounded-2xl bg-ink p-5 text-white shadow-2xl shadow-violet/20 sm:p-6" aria-live="off">
+      <div className="mb-5 flex items-center justify-between">
+        <div className="flex items-center gap-2.5 text-sm font-semibold">
+          <span className="relative flex h-2.5 w-2.5"><span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60 motion-reduce:hidden" /><span className="relative h-2.5 w-2.5 rounded-full bg-emerald-400" /></span>
+          Your agent is working
+        </div>
+        <span className="text-xs text-white/50">Today</span>
+      </div>
+      <ul className="space-y-2.5">
+        {items.map(({ Icon, text, meta, key }, i) => (
+          <li key={key} className={`feed-in flex items-start gap-3 rounded-xl p-3.5 ${i === 3 ? "bg-white/12 ring-1 ring-violet/60" : "bg-white/[0.05] opacity-70"}`}>
+            <span className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-violet/25 text-violet-200"><Icon weight="fill" className="h-4 w-4" /></span>
+            <div><p className="text-sm font-semibold leading-snug">{text}</p><p className="mt-0.5 text-xs text-white/50">{meta}</p></div>
+          </li>
+        ))}
+      </ul>
+      <div className="mt-5 grid grid-cols-3 gap-3 border-t border-white/10 pt-5 text-center">
+        {[["1,248", "Jobs matched"], ["186", "Applications sent"], ["11", "Interviews"]].map(([v, l]) => (
+          <div key={l}><p className="font-display text-2xl font-bold">{v}</p><p className="text-xs text-white/50">{l}</p></div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function Proof() {
+  return (
+    <section className="border-y border-ink/10 bg-white px-6 py-10">
+      <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-6 md:flex-row">
+        <p className="max-w-xs text-center text-sm font-semibold text-ink/60 md:text-left">Job seekers using AIApplier have been hired at companies like</p>
+        <div className="flex flex-wrap justify-center gap-x-10 gap-y-3 font-display text-xl font-bold text-ink/35">
+          {["Google", "Spotify", "Microsoft", "Meta", "Amazon"].map((c) => <span key={c}>{c}</span>)}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function HowItWorks() {
+  return (
+    <section id="how" className="scroll-mt-16 px-6 py-24">
+      <div className="mx-auto max-w-6xl">
+        <h2 className="max-w-xl font-display text-4xl font-extrabold tracking-tight md:text-5xl">Set it up once. Your agent handles the rest.</h2>
+        <ol className="mt-14 grid gap-10 md:grid-cols-3">
+          {steps.map(([t, d], i) => (
+            <li key={t} className="border-t-2 border-ink pt-5">
+              <span className="font-display text-sm font-bold text-violet">Step {i + 1}</span>
+              <h3 className="mt-2 font-display text-xl font-bold">{t}</h3>
+              <p className="mt-2 leading-relaxed text-ink/65">{d}</p>
+            </li>
+          ))}
+        </ol>
+      </div>
+    </section>
+  );
+}
+
+function Pricing() {
+  const [yearly, setYearly] = useState(true);
+  return (
+    <section id="pricing" className="scroll-mt-16 bg-white px-6 py-24">
+      <div className="mx-auto max-w-6xl">
+        <div className="flex flex-col justify-between gap-6 md:flex-row md:items-end">
+          <div>
+            <h2 className="font-display text-4xl font-extrabold tracking-tight md:text-5xl">Start free. Upgrade when interviews start.</h2>
+            <p className="mt-3 text-lg text-ink/65">Cancel anytime.</p>
+          </div>
+          <div role="group" aria-label="Billing period" className="inline-flex self-start rounded-lg bg-ink/5 p-1 text-sm font-semibold md:self-auto">
+            {([["Monthly", false], ["Yearly (save 20%)", true]] as const).map(([l, v]) => (
+              <button key={l} aria-pressed={yearly === v} onClick={() => setYearly(v)}
+                className={`rounded-md px-4 py-2 transition-colors ${yearly === v ? "bg-white shadow-sm" : "text-ink/60"}`}>{l}</button>
+            ))}
+          </div>
+        </div>
+
+        <div className="mt-12 grid items-stretch gap-6 md:grid-cols-3">
+          {plans.map((p) => {
+            const price = p.custom ? "Custom" : `$${yearly && p.yearly != null ? p.yearly : p.monthly}`;
+            return (
+              <div key={p.name} className={`flex flex-col rounded-2xl p-8 ${p.featured ? "bg-ink text-white md:-my-4 md:py-12" : "border border-ink/12 bg-paper"}`}>
+                <div className="flex items-center justify-between">
+                  <h3 className="font-display text-xl font-bold">{p.name}</h3>
+                  {p.featured && <span className="rounded-full bg-violet px-3 py-1 text-xs font-semibold">Most popular</span>}
+                </div>
+                <p className={`mt-1 text-sm ${p.featured ? "text-white/60" : "text-ink/60"}`}>{p.tagline}</p>
+                <p className="mb-8 mt-6 flex items-end gap-1">
+                  <span className="font-display text-5xl font-extrabold tracking-tight">{price}</span>
+                  {!p.custom && <span className={`mb-1.5 text-sm ${p.featured ? "text-white/60" : "text-ink/60"}`}>/month</span>}
+                </p>
+                <ul className="mb-10 flex-1 space-y-3 text-sm">
+                  {p.features.map((f) => (
+                    <li key={f} className="flex items-start gap-3"><Check weight="bold" className={`mt-0.5 h-4 w-4 shrink-0 ${p.featured ? "text-violet-300" : "text-violet"}`} />{f}</li>
+                  ))}
+                </ul>
+                <button className={`btn rounded-xl py-3.5 text-sm font-semibold ${p.featured ? "bg-violet text-white" : "border border-ink/20 hover:bg-ink/5"}`}>{p.cta}</button>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function Footer() {
+  return (
+    <footer className="px-6 pb-10 pt-20">
+      <div className="mx-auto max-w-6xl">
+        <div className="mb-16 flex flex-col items-start justify-between gap-6 rounded-2xl bg-violet p-8 text-white md:flex-row md:items-center md:p-12">
+          <h2 className="max-w-md font-display text-3xl font-extrabold leading-tight md:text-4xl">Your next role is already in someone’s inbox. Get there first.</h2>
+          <button className="rounded-xl bg-white px-6 py-3.5 text-base font-semibold text-violet hover:bg-paper">Hire your AI agent</button>
+        </div>
+        <div className="grid gap-12 md:grid-cols-12">
+          <div className="md:col-span-5">
+            <Logo />
+            <p className="mt-4 max-w-xs text-sm leading-relaxed text-ink/60">Your AI agent for finding and applying to the right jobs.</p>
+            <form className="mt-6 flex max-w-sm gap-2" onSubmit={(e) => e.preventDefault()}>
+              <label htmlFor="email" className="sr-only">Email address</label>
+              <input id="email" type="email" placeholder="Email address" className="min-w-0 flex-1 rounded-lg border border-ink/20 bg-white px-4 py-3 text-sm placeholder:text-ink/40" />
+              <button className="btn rounded-lg bg-ink px-5 py-3 text-sm font-semibold text-white">Subscribe</button>
+            </form>
+          </div>
+          {footerColumns.map(([title, links], i) => (
+            <div key={title} className={i === 2 ? "md:col-span-3" : "md:col-span-2"}>
+              <h3 className="mb-4 text-sm font-bold">{title}</h3>
+              <ul className="space-y-3 text-sm text-ink/60">
+                {links.map((l) => <li key={l}><a href="#" className="hover:text-violet">{l}</a></li>)}
+              </ul>
+            </div>
+          ))}
+        </div>
+        <div className="mt-14 flex flex-col items-center justify-between gap-5 border-t border-ink/10 pt-8 sm:flex-row">
+          <p className="text-xs text-ink/50">© 2026 AIApplier. All rights reserved.</p>
+          <div className="flex gap-2">
+            {([[XLogo, "X"], [LinkedinLogo, "LinkedIn"], [InstagramLogo, "Instagram"], [YoutubeLogo, "YouTube"]] as const).map(([Icon, name]) => (
+              <a key={name} href="#" aria-label={name} className="grid h-9 w-9 place-items-center rounded-full border border-ink/15 text-ink/55 hover:text-violet"><Icon className="h-4 w-4" /></a>
+            ))}
+          </div>
+        </div>
+      </div>
+    </footer>
   );
 }
