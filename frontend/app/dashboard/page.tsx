@@ -26,6 +26,7 @@ import {
   Kanban,
   X,
 } from "@phosphor-icons/react";
+import Navbar from "@/components/Navbar";
 
 type Job = {
   id: number;
@@ -170,10 +171,12 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="min-h-dvh lg:h-dvh lg:overflow-hidden">
+    <>
+    <Navbar />
+    <div className="min-h-dvh pt-[68px] lg:h-dvh lg:overflow-hidden">
       <div className="flex min-h-dvh lg:h-full">
         <aside className="hidden w-64 shrink-0 flex-col bg-[#101323] text-white lg:flex">
-          <div className="flex items-center gap-3 px-6 py-7">
+          {/* <div className="flex items-center gap-3 px-6 py-7">
             <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-violet-500 to-fuchsia-500">
               <Robot size={23} weight="fill" />
             </div>
@@ -185,7 +188,7 @@ export default function DashboardPage() {
                 Career workspace
               </p>
             </div>
-          </div>
+          </div> */}
 
           <div className="mx-4 mb-7 rounded-2xl border border-white/10 bg-white/[0.04] p-4">
             <div className="flex items-center gap-3">
@@ -763,5 +766,6 @@ export default function DashboardPage() {
         })}
       </nav>
     </div>
+    </>
   );
 }

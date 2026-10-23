@@ -18,6 +18,8 @@ import {
   TrendUp,
 } from "@phosphor-icons/react";
 
+import Navbar from "@/components/Navbar";
+
 const navigation = [
   { label: "Features", href: "#features" },
   { label: "How it works", href: "#how-it-works" },
@@ -161,7 +163,7 @@ export default function AIApplierLanding() {
 
   return (
     <main className="min-h-screen overflow-hidden bg-paper text-ink">
-      <Nav />
+      <Navbar />
 
       <Hero />
 
@@ -188,107 +190,7 @@ export default function AIApplierLanding() {
 }
 
 
-function Nav() {
-  const [menuOpen, setMenuOpen] = useState(false);
 
-  return (
-    <header className="fixed inset-x-0 top-0 z-50 border-b border-ink/[0.07] bg-paper/95 backdrop-blur-xl">
-      <nav
-        aria-label="Main navigation"
-        className="mx-auto flex h-[72px] max-w-6xl items-center justify-between px-5 sm:px-8"
-      >
-        <Logo />
-
-        {/* Desktop navigation */}
-        <div className="hidden items-center gap-8 md:flex">
-          {navigation.map((item) => (
-            <a
-              key={item.label}
-              href={item.href}
-              className="text-sm font-semibold text-ink/60 transition-colors hover:text-violet"
-            >
-              {item.label}
-            </a>
-          ))}
-        </div>
-
-        {/* Desktop actions */}
-        <div className="hidden items-center gap-3 md:flex">
-          <a
-            href="/dashboard"
-            className="rounded-xl px-4 py-2.5 text-sm font-bold text-ink/70 transition-colors hover:bg-ink/5"
-          >
-            Dashboard
-          </a>
-          <a
-            href="#features"
-            className="inline-flex items-center gap-2 rounded-xl bg-violet px-4 py-2.5 text-sm font-bold text-white shadow-lg shadow-violet/20 transition-all hover:-translate-y-0.5 hover:bg-violet/90"
-          >
-            Get started <ArrowRight size={15} weight="bold" />
-          </a>
-        </div>
-
-        {/* Mobile hamburger */}
-        <button
-          type="button"
-          className="grid size-11 place-items-center rounded-xl border border-ink/10 bg-white text-ink transition-colors hover:bg-violet/5 md:hidden"
-          aria-label={menuOpen ? "Close navigation menu" : "Open navigation menu"}
-          aria-expanded={menuOpen}
-          aria-controls="mobile-navigation"
-          onClick={() => setMenuOpen((open) => !open)}
-        >
-          {menuOpen ? (
-            <span className="text-2xl leading-none" aria-hidden="true">×</span>
-          ) : (
-            <span className="flex w-5 flex-col gap-[5px]" aria-hidden="true">
-              <span className="h-0.5 w-full rounded-full bg-current" />
-              <span className="h-0.5 w-full rounded-full bg-current" />
-              <span className="h-0.5 w-full rounded-full bg-current" />
-            </span>
-          )}
-        </button>
-      </nav>
-
-      {/* Mobile dropdown */}
-      {menuOpen && (
-        <div
-          id="mobile-navigation"
-          className="border-t border-ink/[0.07] bg-paper px-5 pb-5 pt-3 shadow-xl shadow-ink/5 md:hidden"
-        >
-          <div className="mx-auto flex max-w-6xl flex-col gap-1">
-            {navigation.map((item) => (
-              <a
-                key={item.label}
-                href={item.href}
-                onClick={() => setMenuOpen(false)}
-                className="rounded-xl px-4 py-3.5 text-sm font-semibold text-ink/75 transition-colors hover:bg-violet/5 hover:text-violet"
-              >
-                {item.label}
-              </a>
-            ))}
-
-            <div className="mt-2 grid grid-cols-2 gap-3 border-t border-ink/[0.08] pt-4">
-              <a
-                href="/dashboard"
-                onClick={() => setMenuOpen(false)}
-                className="rounded-xl border border-ink/10 px-4 py-3 text-center text-sm font-bold"
-              >
-                Dashboard
-              </a>
-              <a
-                href="#features"
-                onClick={() => setMenuOpen(false)}
-                className="rounded-xl bg-violet px-4 py-3 text-center text-sm font-bold text-white"
-              >
-                Get started
-              </a>
-            </div>
-          </div>
-        </div>
-      )}
-    </header>
-  );
-}
 
 
 function Hero() {
