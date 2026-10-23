@@ -15,6 +15,11 @@ class Application(Base):
         nullable=False,
         index=True,
     )
+    user_id: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+        index=True,
+    )
     status: Mapped[str] = mapped_column(
         String(50),
         default="saved",

@@ -1,9 +1,11 @@
+
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.auth import CurrentUser
 from app.db.dependencies import get_db
 from app.models.application import Application
 from app.models.job import Job
@@ -27,6 +29,7 @@ router = APIRouter(
 )
 def create_application(
     payload: ApplicationCreate,
+    user_id: CurrentUser,
     db: Session = Depends(get_db),
 ):
     job = db.get(Job, payload.job_id)
@@ -35,6 +38,7 @@ def create_application(
         raise HTTPException(status_code=404, detail="Job not found")
 
     application = Application(
+        user_id=user_id,
         job_id=payload.job_id,
         notes=payload.notes,
     )
@@ -48,12 +52,14 @@ def create_application(
 
 @router.get("", response_model=list[ApplicationRead])
 def list_applications(
+    user_id: CurrentUser,
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=20, ge=1, le=100),
     db: Session = Depends(get_db),
 ):
     statement = (
         select(Application)
+        .where(Application.user_id == user_id)
         .order_by(Application.created_at.desc())
         .offset(skip)
         .limit(limit)
@@ -66,9 +72,14 @@ def list_applications(
 def update_application_status(
     application_id: int,
     payload: ApplicationStatusUpdate,
+    user_id: CurrentUser,
     db: Session = Depends(get_db),
 ):
-    application = db.get(Application, application_id)
+    statement = select(Application).where(
+        Application.id == application_id,
+        Application.user_id == user_id,
+    )
+    application = db.scalar(statement)
 
     if application is None:
         raise HTTPException(
