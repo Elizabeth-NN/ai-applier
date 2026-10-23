@@ -2,6 +2,8 @@ from fastapi import FastAPI, HTTPException
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
+from app.api.applications import router as applications_router
+from app.api.jobs import router as jobs_router
 from app.db.session import engine
 
 
@@ -10,6 +12,9 @@ app = FastAPI(
     description="Backend API for the AI Applier job application platform.",
     version="0.1.0",
 )
+
+app.include_router(jobs_router)
+app.include_router(applications_router)
 
 
 @app.get("/")
