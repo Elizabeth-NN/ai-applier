@@ -6,6 +6,8 @@ from app.core.auth import CurrentAdmin
 from app.db.dependencies import get_db
 from app.models.job import Job
 from app.schemas.job import JobCreate, JobRead
+from app.services.job_ingestion import ingest_jobicy_jobs
+from app.services.jobicy_adapter import JobicyAPIError
 
 
 router = APIRouter(prefix="/api/jobs", tags=["Jobs"])
@@ -44,6 +46,21 @@ def list_jobs(
     )
 
     return db.scalars(statement).all()
+
+
+@router.post("/ingest/jobicy")
+def refresh_jobicy_jobs(
+    _admin_id: CurrentAdmin,
+    db: Session = Depends(get_db),
+):
+    """Import and refresh jobs from the public Jobicy feed."""
+    try:
+        return ingest_jobicy_jobs(db)
+    except JobicyAPIError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Jobicy could not provide a complete, valid feed.",
+        ) from exc
 
 
 @router.get("/{job_id}", response_model=JobRead)

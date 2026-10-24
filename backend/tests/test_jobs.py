@@ -264,3 +264,66 @@ def test_optional_fields_enforce_maximum_lengths(
     response = job_context.post("/api/jobs", json=payload)
 
     assert response.status_code == 422
+
+
+def test_jobicy_refresh_endpoint_returns_ingestion_summary(
+    job_context, monkeypatch
+):
+    from app.api import jobs as jobs_api
+
+    monkeypatch.setattr(
+        jobs_api,
+        "ingest_jobicy_jobs",
+        lambda _db: {"fetched": 3, "inserted": 2, "updated": 1},
+    )
+
+    response = job_context.post("/api/jobs/ingest/jobicy")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "fetched": 3,
+        "inserted": 2,
+        "updated": 1,
+    }
+
+
+def test_jobicy_refresh_endpoint_requires_admin(
+    job_context, monkeypatch
+):
+    from app.api import jobs as jobs_api
+
+    def reject_admin():
+        raise HTTPException(
+            status_code=403,
+            detail="Admin access required",
+        )
+
+    monkeypatch.setattr(
+        jobs_api,
+        "ingest_jobicy_jobs",
+        lambda _db: pytest.fail("Ingestion must not run for a non-admin"),
+    )
+    app.dependency_overrides[require_admin] = reject_admin
+
+    response = job_context.post("/api/jobs/ingest/jobicy")
+
+    assert response.status_code == 403
+
+
+def test_jobicy_refresh_endpoint_handles_source_failure(
+    job_context, monkeypatch
+):
+    from app.api import jobs as jobs_api
+    from app.services.jobicy_adapter import JobicyAPIError
+
+    def fail_ingestion(_db):
+        raise JobicyAPIError("Simulated upstream failure")
+
+    monkeypatch.setattr(jobs_api, "ingest_jobicy_jobs", fail_ingestion)
+
+    response = job_context.post("/api/jobs/ingest/jobicy")
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == (
+        "Jobicy could not provide a complete, valid feed."
+    )

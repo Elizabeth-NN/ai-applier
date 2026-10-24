@@ -22,4 +22,12 @@ class JobRead(BaseModel):
     description: str | None
     source_url: str | None
     employment_type: str | None
+    source_name: str | None
+    source_job_id: str | None
+    remote_type: str | None
+    eligible_countries: list[str] | None
+    eligibility_status: str
+    listing_status: str
+    published_at: datetime | None
+    last_seen_at: datetime | None
     created_at: datetime
