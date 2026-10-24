@@ -1,6 +1,7 @@
 from collections.abc import Generator
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -196,3 +197,84 @@ def test_duplicate_save_preserves_existing_application(test_context):
     assert duplicate.json()["id"] == application_id
     assert duplicate.json()["status"] == "applied"
     assert duplicate.json()["notes"] == "Original notes"
+
+
+def test_application_routes_require_authentication(test_context):
+    client = test_context["client"]
+    db_factory = test_context["db_factory"]
+    job_id = create_job(db_factory)
+
+    # Create a record while the test user is authenticated.
+    created = client.post(
+        "/api/applications",
+        json={"job_id": job_id},
+    )
+    assert created.status_code == 201
+    application_id = created.json()["id"]
+
+    # Simulate a request without an authenticated user.
+    def reject_user():
+        raise HTTPException(
+            status_code=401,
+            detail="Not authenticated",
+        )
+
+    app.dependency_overrides[require_user] = reject_user
+
+    responses = [
+        client.get("/api/applications"),
+        client.post(
+            "/api/applications",
+            json={"job_id": job_id},
+        ),
+        client.patch(
+            f"/api/applications/{application_id}",
+            json={"status": "applied"},
+        ),
+    ]
+
+    assert [response.status_code for response in responses] == [
+        401,
+        401,
+        401,
+    ]
+
+
+def test_cannot_save_nonexistent_job(test_context):
+    response = test_context["client"].post(
+        "/api/applications",
+        json={"job_id": 999999},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Job not found"
+
+
+def test_invalid_application_status_is_rejected(test_context):
+    client = test_context["client"]
+    job_id = create_job(test_context["db_factory"])
+
+    created = client.post(
+        "/api/applications",
+        json={"job_id": job_id},
+    )
+    assert created.status_code == 201
+
+    application_id = created.json()["id"]
+
+    response = client.patch(
+        f"/api/applications/{application_id}",
+        json={"status": "in_progress"},
+    )
+
+    assert response.status_code == 422
+
+
+def test_updating_nonexistent_application_returns_404(test_context):
+    response = test_context["client"].patch(
+        "/api/applications/999999",
+        json={"status": "applied"},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Application not found"
