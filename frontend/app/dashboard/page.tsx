@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useAuth } from "@clerk/nextjs";
 import {
   SquaresFour,
   Lightning,
@@ -29,53 +30,89 @@ import {
 import Navbar from "@/components/Navbar";
 import BackendAuthCheck from "@/components/BackendAuthCheck";
 
+type ApiJob = {
+  id: number;
+  company: string;
+  title: string;
+  location: string | null;
+  created_at: string;
+};
+
+type ApiApplication = {
+  id: number;
+  job_id: number;
+  status: "saved" | "applied" | "interview" | "rejected" | "offer";
+  notes: string | null;
+  applied_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 type Job = {
   id: number;
   company: string;
   title: string;
   location: string;
-  match: number;
-  age: string;
+  createdAt: string;
   color: string;
   letter: string;
-  status: "Saved" | "Applied" | "Interview" | "Offer";
+  applicationId: number | null;
+  apiStatus: ApiApplication["status"] | null;
+  status: "Available" | "Saved" | "Applied" | "Interview" | "Rejected" | "Offer";
 };
 
-const initialJobs: Job[] = [
-  {
-    id: 1,
-    company: "Stripe",
-    title: "Junior Software Engineer",
-    location: "Remote",
-    match: 96,
-    age: "2 hours ago",
-    color: "bg-indigo-50 text-indigo-700",
-    letter: "S",
-    status: "Saved",
-  },
-  {
-    id: 2,
-    company: "GitLab",
-    title: "Associate Backend Engineer",
-    location: "Remote · Global",
-    match: 92,
-    age: "5 hours ago",
-    color: "bg-orange-50 text-orange-700",
-    letter: "G",
-    status: "Saved",
-  },
-  {
-    id: 3,
-    company: "Canva",
-    title: "Graduate Software Developer",
-    location: "Remote · Selected regions",
-    match: 88,
-    age: "Yesterday",
-    color: "bg-teal-50 text-teal-700",
-    letter: "C",
-    status: "Saved",
-  },
+const companyColors = [
+  "bg-indigo-50 text-indigo-700",
+  "bg-orange-50 text-orange-700",
+  "bg-teal-50 text-teal-700",
+  "bg-sky-50 text-sky-700",
+  "bg-rose-50 text-rose-700",
+  "bg-amber-50 text-amber-700",
 ];
+
+const statusLabels: Record<ApiApplication["status"], Job["status"]> = {
+  saved: "Saved",
+  applied: "Applied",
+  interview: "Interview",
+  rejected: "Rejected",
+  offer: "Offer",
+};
+
+async function apiRequest<T>(
+  path: string,
+  token: string,
+  options: RequestInit = {},
+): Promise<T> {
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL;
+
+  if (!apiUrl) {
+    throw new Error("NEXT_PUBLIC_API_URL is not configured.");
+  }
+
+  const response = await fetch(
+    `${apiUrl.replace(/\/$/, "")}${path}`,
+    {
+      ...options,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        ...(options.body ? { "Content-Type": "application/json" } : {}),
+        ...options.headers,
+      },
+    },
+  );
+
+  const data = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    const detail =
+      data && typeof data.detail === "string"
+        ? data.detail
+        : `Request failed (${response.status}).`;
+    throw new Error(detail);
+  }
+
+  return data as T;
+}
 
 const navItems = [
   { label: "Dashboard", icon: SquaresFour },
@@ -85,37 +122,6 @@ const navItems = [
   { label: "Insights", icon: ChartPieSlice },
 ];
 
-const stats = [
-  {
-    label: "Jobs matched",
-    value: "128",
-    delta: "This month",
-    icon: Binoculars,
-    style: "bg-indigo-50 text-indigo-600",
-  },
-  {
-    label: "Applications",
-    value: "24",
-    delta: "6 pending review",
-    icon: PaperPlaneTilt,
-    style: "bg-violet-50 text-violet-600",
-  },
-  {
-    label: "Interviews",
-    value: "4",
-    delta: "2 upcoming",
-    icon: ChatsCircle,
-    style: "bg-amber-50 text-amber-600",
-  },
-  {
-    label: "Response rate",
-    value: "16.7%",
-    delta: "Based on demo data",
-    icon: ChartPieSlice,
-    style: "bg-emerald-50 text-emerald-600",
-  },
-];
-
 const columns = [
   { name: "Saved", color: "text-slate-500", dot: "bg-slate-400" },
   { name: "Applied", color: "text-violet-600", dot: "bg-violet-500" },
@@ -123,22 +129,90 @@ const columns = [
   { name: "Offer", color: "text-emerald-600", dot: "bg-emerald-500" },
 ] as const;
 
-const activity = [
-  { day: "Mon", height: 35 },
-  { day: "Tue", height: 55 },
-  { day: "Wed", height: 42 },
-  { day: "Thu", height: 75 },
-  { day: "Fri", height: 92 },
-  { day: "Sat", height: 48 },
-  { day: "Sun", height: 65 },
-];
-
 export default function DashboardPage() {
+  const { isLoaded, isSignedIn, getToken } = useAuth();
   const [activePage, setActivePage] = useState("Dashboard");
   const [search, setSearch] = useState("");
   const [view, setView] = useState<"board" | "list">("board");
-  const [jobs, setJobs] = useState(initialJobs);
+  const [apiJobs, setApiJobs] = useState<ApiJob[]>([]);
+  const [applications, setApplications] = useState<ApiApplication[]>([]);
   const [notice, setNotice] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [savingJobId, setSavingJobId] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!isLoaded) return;
+
+    if (!isSignedIn) {
+      setLoading(false);
+      setError("Sign in to load your jobs and applications.");
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadData() {
+      setLoading(true);
+      setError("");
+
+      try {
+        const token = await getToken();
+        if (!token) {
+          throw new Error("No Clerk session token is available.");
+        }
+
+        const [loadedJobs, loadedApplications] = await Promise.all([
+          apiRequest<ApiJob[]>("/api/jobs?limit=100", token),
+          apiRequest<ApiApplication[]>("/api/applications?limit=100", token),
+        ]);
+
+        if (!cancelled) {
+          setApiJobs(loadedJobs);
+          setApplications(loadedApplications);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(
+            err instanceof Error
+              ? err.message
+              : "Could not load dashboard data.",
+          );
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    void loadData();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isLoaded, isSignedIn, getToken]);
+
+  const jobs = useMemo<Job[]>(
+    () =>
+      apiJobs.map((job, index) => {
+        const application = applications.find(
+          (item) => item.job_id === job.id,
+        );
+
+        return {
+          id: job.id,
+          company: job.company,
+          title: job.title,
+          location: job.location || "Location not specified",
+          createdAt: new Date(job.created_at).toLocaleDateString(),
+          color: companyColors[index % companyColors.length],
+          letter: job.company.trim().charAt(0).toUpperCase() || "J",
+          applicationId: application?.id ?? null,
+          apiStatus: application?.status ?? null,
+          status: application ? statusLabels[application.status] : "Available",
+        };
+      }),
+    [apiJobs, applications],
+  );
 
   const filteredJobs = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -150,25 +224,155 @@ export default function DashboardPage() {
     );
   }, [jobs, search]);
 
-  function saveJob(jobId: number) {
-    setJobs((current) =>
-      current.map((job) =>
-        job.id === jobId
-          ? {
-              ...job,
-              status: job.status === "Saved" ? "Applied" : "Saved",
-            }
-          : job,
-      ),
+  const trackedJobs = useMemo(
+    () => filteredJobs.filter((job) => job.applicationId !== null),
+    [filteredJobs],
+  );
+
+  const stats = [
+    {
+      label: "Available jobs",
+      value: String(apiJobs.length),
+      delta: "Loaded from backend",
+      icon: Binoculars,
+      style: "bg-indigo-50 text-indigo-600",
+    },
+    {
+      label: "Applications",
+      value: String(applications.length),
+      delta: "Your tracked jobs",
+      icon: PaperPlaneTilt,
+      style: "bg-violet-50 text-violet-600",
+    },
+    {
+      label: "Interviews",
+      value: String(applications.filter((app) => app.status === "interview").length),
+      delta: "Recorded interviews",
+      icon: ChatsCircle,
+      style: "bg-amber-50 text-amber-600",
+    },
+    {
+      label: "Offers",
+      value: String(applications.filter((app) => app.status === "offer").length),
+      delta: "Recorded offers",
+      icon: ChartPieSlice,
+      style: "bg-emerald-50 text-emerald-600",
+    },
+  ];
+
+  const [activity, setActivity] = useState<
+    { day: string; count: number; height: number }[]
+  >([]);
+
+  useEffect(() => {
+    const days = Array.from({ length: 7 }, (_, index) => {
+      const date = new Date();
+      date.setHours(0, 0, 0, 0);
+      date.setDate(date.getDate() - (6 - index));
+
+      const nextDay = new Date(date);
+      nextDay.setDate(nextDay.getDate() + 1);
+
+      const count = applications.filter((application) => {
+        const created = new Date(application.created_at);
+        return created >= date && created < nextDay;
+      }).length;
+
+      return {
+        day: date.toLocaleDateString("en", { weekday: "short" }),
+        count,
+      };
+    });
+
+    const maximum = Math.max(...days.map((day) => day.count), 1);
+
+    setActivity(
+      days.map((day) => ({
+        ...day,
+        height: day.count === 0 ? 0 : Math.max(8, (day.count / maximum) * 100),
+      })),
     );
-    setNotice("Application status updated.");
-    window.setTimeout(() => setNotice(""), 2500);
+  }, [applications]);
+
+  async function changeStatus(
+    applicationId: number,
+    nextStatus: ApiApplication["status"],
+  ) {
+    setError("");
+
+    try {
+      const token = await getToken();
+      if (!token) throw new Error("Please sign in again.");
+
+      const updated = await apiRequest<ApiApplication>(
+        `/api/applications/${applicationId}`,
+        token,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ status: nextStatus }),
+        },
+      );
+
+      setApplications((current) =>
+        current.map((application) =>
+          application.id === updated.id ? updated : application,
+        ),
+      );
+      setNotice(`Application status changed to ${statusLabels[nextStatus]}.`);
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Could not update application.",
+      );
+    }
+  }
+
+  async function saveJob(jobId: number) {
+    if (savingJobId !== null) return;
+
+    const job = apiJobs.find((item) => item.id === jobId);
+    if (!job) return;
+
+    const existing = applications.find((item) => item.job_id === jobId);
+
+    if (existing) {
+      if (existing.status === "saved") {
+        await changeStatus(existing.id, "applied");
+      } else {
+        setNotice(`This job is already tracked as ${statusLabels[existing.status]}.`);
+      }
+      return;
+    }
+
+    setSavingJobId(jobId);
+    setError("");
+
+    try {
+      const token = await getToken();
+      if (!token) throw new Error("Please sign in again.");
+
+      const created = await apiRequest<ApiApplication>(
+        "/api/applications",
+        token,
+        {
+          method: "POST",
+          body: JSON.stringify({ job_id: jobId, notes: null }),
+        },
+      );
+
+      setApplications((current) => [created, ...current]);
+      setNotice("Job saved to your application pipeline.");
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Could not save this job.",
+      );
+    } finally {
+      setSavingJobId(null);
+    }
   }
 
   function startApplication() {
     setActivePage("Job Matches");
-    setNotice("Choose a matching job to start your application.");
-    window.setTimeout(() => setNotice(""), 3000);
+    setNotice("Choose a job to save to your application pipeline.");
   }
 
   return (
@@ -260,7 +464,7 @@ export default function DashboardPage() {
                   YOUR JOB SEARCH
                 </span>
                 <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-500">
-                  Demo
+                  {loading ? "Loading" : error ? "Connection issue" : "Live data"}
                 </span>
               </div>
               <h1 className="mt-2 text-xl font-extrabold tracking-tight text-slate-900 sm:text-2xl">
@@ -334,6 +538,18 @@ export default function DashboardPage() {
                 <X size={16} />
               </button>
             </div>
+          )}
+
+          {error && (
+            <div role="alert" className="mx-5 mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 sm:mx-8 lg:mx-10">
+              {error}
+            </div>
+          )}
+
+          {loading && (
+            <p role="status" className="px-5 pt-4 text-sm text-slate-500 sm:px-8 lg:px-10">
+              Loading jobs and applications…
+            </p>
           )}
 
           <div className="custom-scrollbar flex-1 space-y-8 overflow-y-auto p-5 pb-24 sm:p-8 sm:pb-24 lg:p-10">
@@ -446,12 +662,14 @@ export default function DashboardPage() {
                                 </h3>
                                 <span
                                   className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${
-                                    job.match >= 90
+                                    job.applicationId !== null
                                       ? "bg-emerald-50 text-emerald-700"
-                                      : "bg-amber-50 text-amber-700"
+                                      : "bg-slate-100 text-slate-600"
                                   }`}
                                 >
-                                  {job.match}% match
+                                  {job.applicationId !== null
+                                    ? job.status
+                                    : "Available"}
                                 </span>
                               </div>
                               <p className="mt-1 text-sm text-slate-600">
@@ -464,25 +682,35 @@ export default function DashboardPage() {
                                 </span>
                                 <span className="flex items-center gap-1.5">
                                   <Clock size={14} />
-                                  {job.age}
+                                  {job.createdAt}
                                 </span>
                               </div>
                             </div>
 
                             <button
                               onClick={() => saveJob(job.id)}
-                              className={`flex w-full items-center justify-center gap-1.5 rounded-xl px-3 py-2.5 text-xs font-bold transition sm:w-auto sm:py-2 ${
-                                job.status === "Applied"
+                              disabled={
+                                savingJobId === job.id ||
+                                (job.applicationId !== null && job.apiStatus !== "saved")
+                              }
+                              className={`flex w-full items-center justify-center gap-1.5 rounded-xl px-3 py-2.5 text-xs font-bold transition disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto sm:py-2 ${
+                                job.applicationId !== null && job.apiStatus !== "saved"
                                   ? "bg-emerald-50 text-emerald-700"
                                   : "bg-violet-600 text-white hover:bg-violet-700"
                               }`}
                             >
-                              {job.status === "Applied" ? (
+                              {job.applicationId !== null && job.apiStatus !== "saved" ? (
                                 <CheckCircle size={15} />
                               ) : (
                                 <PaperPlaneTilt size={15} />
                               )}
-                              {job.status === "Applied" ? "Applied" : "Apply"}
+                              {savingJobId === job.id
+                                ? "Saving…"
+                                : job.apiStatus === "saved"
+                                  ? "Mark applied"
+                                  : job.applicationId !== null
+                                    ? job.status
+                                    : "Save job"}
                             </button>
                           </div>
                         </article>
@@ -497,7 +725,7 @@ export default function DashboardPage() {
                           Weekly activity
                         </p>
                         <p className="mt-1 text-xs text-slate-500">
-                          Illustrative demo data
+                          Applications created in the last 7 days
                         </p>
                       </div>
                       <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-500/15 text-violet-300">
@@ -506,15 +734,15 @@ export default function DashboardPage() {
                     </div>
 
                     <div className="mt-8 flex h-36 items-end gap-2 sm:gap-3">
-                      {activity.map(({ day, height }, index) => (
+                      {activity.map(({ day, count, height }) => (
                         <div
                           key={day}
                           className="flex h-full flex-1 flex-col items-center justify-end gap-3"
                         >
                           <div
-                            title={`${day}: ${height}% illustration`}
+                            title={`${day}: ${count} application(s)`}
                             className={`w-full rounded-t-md transition-opacity hover:opacity-70 ${
-                              index === 4
+                              count > 0
                                 ? "bg-gradient-to-t from-violet-700 to-fuchsia-400"
                                 : "bg-slate-700"
                             }`}
@@ -533,7 +761,7 @@ export default function DashboardPage() {
                           <p className="text-xs text-slate-400">
                             Applications tracked
                           </p>
-                          <p className="mt-2 text-2xl font-extrabold">24</p>
+                          <p className="mt-2 text-2xl font-extrabold">{applications.length}</p>
                         </div>
                         <div className="rounded-xl bg-emerald-500/10 p-3 text-emerald-400">
                           <TrendUp size={23} />
@@ -594,7 +822,7 @@ export default function DashboardPage() {
                 {view === "board" ? (
                   <div className="custom-scrollbar -mx-5 flex snap-x snap-mandatory gap-4 overflow-x-auto px-5 pb-4 sm:mx-0 sm:snap-none sm:px-0">
                     {columns.map((column) => {
-                      const columnJobs = filteredJobs.filter(
+                      const columnJobs = trackedJobs.filter(
                         (job) => job.status === column.name,
                       );
 
@@ -656,15 +884,25 @@ export default function DashboardPage() {
                                   <span className="min-w-0 truncate text-[10px] text-slate-400">
                                     {job.location}
                                   </span>
-                                  <button
-                                    onClick={() => saveJob(job.id)}
-                                    title="Move between Saved and Applied"
-                                    className="shrink-0 text-xs font-bold text-violet-600 hover:text-violet-800"
+                                  <select
+                                    aria-label={`Change status for ${job.title}`}
+                                    value={job.apiStatus ?? "saved"}
+                                    onChange={(event) => {
+                                      if (job.applicationId !== null) {
+                                        void changeStatus(
+                                          job.applicationId,
+                                          event.target.value as ApiApplication["status"],
+                                        );
+                                      }
+                                    }}
+                                    className="max-w-32 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-semibold text-violet-700"
                                   >
-                                    {job.status === "Saved"
-                                      ? "Mark applied"
-                                      : "Undo"}
-                                  </button>
+                                    <option value="saved">Saved</option>
+                                    <option value="applied">Applied</option>
+                                    <option value="interview">Interview</option>
+                                    <option value="offer">Offer</option>
+                                    <option value="rejected">Rejected</option>
+                                  </select>
                                 </div>
                               </article>
                             ))
@@ -685,7 +923,7 @@ export default function DashboardPage() {
                             Location
                           </th>
                           <th className="px-4 py-4 font-semibold sm:px-5">
-                            Match
+                            Status
                           </th>
                           <th className="px-4 py-4 font-semibold sm:px-5">
                             Status
@@ -709,21 +947,32 @@ export default function DashboardPage() {
                             <td className="hidden px-5 py-4 text-slate-600 sm:table-cell">
                               {job.location}
                             </td>
-                            <td className="px-4 py-4 font-semibold text-emerald-700 sm:px-5">
-                              {job.match}%
+                            <td className="px-4 py-4 text-slate-600 sm:px-5">
+                              {job.status === "Available" ? "Not tracked" : job.status}
                             </td>
                             <td className="px-4 py-4 text-slate-600 sm:px-5">
                               {job.status}
                             </td>
                             <td className="px-4 py-4 sm:px-5">
-                              <button
-                                onClick={() => saveJob(job.id)}
-                                className="font-semibold whitespace-nowrap text-violet-600"
+                              <select
+                                aria-label={`Change status for ${job.title}`}
+                                value={job.apiStatus ?? "saved"}
+                                onChange={(event) => {
+                                  if (job.applicationId !== null) {
+                                    void changeStatus(
+                                      job.applicationId,
+                                      event.target.value as ApiApplication["status"],
+                                    );
+                                  }
+                                }}
+                                className="max-w-32 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-semibold text-violet-700"
                               >
-                                {job.status === "Saved"
-                                  ? "Mark applied"
-                                  : "Undo"}
-                              </button>
+                                <option value="saved">Saved</option>
+                                <option value="applied">Applied</option>
+                                <option value="interview">Interview</option>
+                                <option value="offer">Offer</option>
+                                <option value="rejected">Rejected</option>
+                              </select>
                             </td>
                           </tr>
                         ))}
@@ -735,8 +984,8 @@ export default function DashboardPage() {
             )}
 
             <footer className="border-t border-slate-200 py-5 text-xs text-slate-400">
-              AI Applier · Your job search, organized. All current dashboard
-              metrics and job listings are illustrative demo data.
+              AI Applier · Your job search, organized. Jobs and application
+              statuses are loaded from your backend.
             </footer>
           </div>
         </main>
