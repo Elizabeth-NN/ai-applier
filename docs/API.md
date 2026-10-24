@@ -53,7 +53,9 @@ The user interface labels these as Saved, Applied, Interview, Rejected, and Offe
 - Derive ownership from the authenticated identity, never an untrusted request field.
 - Return `404` or another deliberately chosen safe response for records the user cannot access.
 - Add pagination before result volumes grow.
-- Prevent duplicate application records or return a predictable conflict response.
+- Enforce one application per user/job pair with the database constraint `uq_applications_user_job`.
+- `POST /api/applications` returns `201 Created` for a new application. If the authenticated user has already saved that job, it returns `200 OK` with the existing record and preserves its notes and status.
+- Different users may save the same job independently. The `user_id` must come from the authenticated identity, not the request body.
 - Keep timestamps consistently timezone-aware.
 - Avoid returning internal stack traces or secrets.
 - Test both successful requests and unauthorized/invalid requests.

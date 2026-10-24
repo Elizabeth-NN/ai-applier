@@ -1,8 +1,9 @@
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.auth import CurrentUser
@@ -30,12 +31,24 @@ router = APIRouter(
 def create_application(
     payload: ApplicationCreate,
     user_id: CurrentUser,
+    response: Response,
     db: Session = Depends(get_db),
 ):
     job = db.get(Job, payload.job_id)
 
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
+
+    # Saving the same job again returns the existing application.
+    statement = select(Application).where(
+        Application.user_id == user_id,
+        Application.job_id == payload.job_id,
+    )
+    existing = db.scalar(statement)
+
+    if existing is not None:
+        response.status_code = status.HTTP_200_OK
+        return existing
 
     application = Application(
         user_id=user_id,
@@ -44,9 +57,21 @@ def create_application(
     )
 
     db.add(application)
-    db.commit()
-    db.refresh(application)
 
+    try:
+        db.commit()
+    except IntegrityError:
+        # Another request may have saved this job at the same time.
+        db.rollback()
+        existing = db.scalar(statement)
+
+        if existing is None:
+            raise
+
+        response.status_code = status.HTTP_200_OK
+        return existing
+
+    db.refresh(application)
     return application
 
 

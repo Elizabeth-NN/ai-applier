@@ -1,6 +1,14 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import (
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.session import Base
@@ -8,6 +16,13 @@ from app.db.session import Base
 
 class Application(Base):
     __tablename__ = "applications"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "job_id",
+            name="uq_applications_user_job",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     job_id: Mapped[int] = mapped_column(
