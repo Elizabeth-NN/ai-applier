@@ -175,3 +175,82 @@ def fetch_jobicy_jobs(
     finally:
         if owns_client:
             http.close()
+
+
+JOBICY_STATUS_API_URL = "https://jobicy.com/api/jobs/status"
+
+
+def fetch_jobicy_statuses(
+    source_ids: list[str],
+    *,
+    client: httpx.Client | None = None,
+) -> dict[str, str]:
+    """Check Jobicy listing status in batches of at most 100 IDs."""
+    ids = list(dict.fromkeys(source_ids))
+
+    for source_id in ids:
+        if not source_id.isdigit() or int(source_id) < 1:
+            raise ValueError("Jobicy source IDs must be positive integers.")
+
+    if not ids:
+        return {}
+
+    owns_client = client is None
+    http = client or httpx.Client(timeout=20.0)
+    statuses: dict[str, str] = {}
+    allowed_statuses = {"active", "closed", "unknown"}
+
+    try:
+        for start in range(0, len(ids), 100):
+            batch = ids[start:start + 100]
+
+            try:
+                response = http.get(
+                    JOBICY_STATUS_API_URL,
+                    params={"ids": ",".join(batch)},
+                )
+                response.raise_for_status()
+                payload = response.json()
+            except (httpx.HTTPError, ValueError) as exc:
+                raise JobicyAPIError(
+                    f"Unable to check Jobicy listing status: {exc}"
+                ) from exc
+
+            if not isinstance(payload, dict) or payload.get("success") is not True:
+                raise JobicyAPIError("Jobicy returned an invalid status response.")
+
+            records = payload.get("jobs")
+            if not isinstance(records, list):
+                raise JobicyAPIError("Jobicy status response has no valid jobs list.")
+
+            batch_statuses: dict[str, str] = {}
+
+            for record in records:
+                if not isinstance(record, dict):
+                    raise JobicyAPIError("Jobicy returned an invalid status record.")
+
+                raw_id = record.get("id")
+                raw_status = record.get("status")
+
+                if raw_id is None or isinstance(raw_id, bool):
+                    raise JobicyAPIError("Jobicy returned a status without an ID.")
+
+                source_id = str(raw_id)
+
+                if source_id not in batch:
+                    raise JobicyAPIError("Jobicy returned an unexpected status ID.")
+
+                if raw_status not in allowed_statuses:
+                    raise JobicyAPIError("Jobicy returned an unsupported listing status.")
+
+                batch_statuses[source_id] = raw_status
+
+            if set(batch_statuses) != set(batch):
+                raise JobicyAPIError("Jobicy status response omitted requested IDs.")
+
+            statuses.update(batch_statuses)
+
+        return statuses
+    finally:
+        if owns_client:
+            http.close()

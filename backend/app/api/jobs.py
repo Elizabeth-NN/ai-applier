@@ -8,6 +8,7 @@ from app.models.job import Job
 from app.schemas.job import JobCreate, JobRead
 from app.services.job_ingestion import ingest_jobicy_jobs
 from app.services.jobicy_adapter import JobicyAPIError
+from app.services.job_status_sync import sync_jobicy_statuses
 
 
 router = APIRouter(prefix="/api/jobs", tags=["Jobs"])
@@ -60,6 +61,21 @@ def refresh_jobicy_jobs(
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Jobicy could not provide a complete, valid feed.",
+        ) from exc
+
+
+@router.post("/sync/jobicy-status")
+def sync_jobicy_listing_statuses(
+    _admin_id: CurrentAdmin,
+    db: Session = Depends(get_db),
+):
+    """Synchronize active, closed, and unknown status for imported listings."""
+    try:
+        return sync_jobicy_statuses(db)
+    except JobicyAPIError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Jobicy listing statuses could not be verified.",
         ) from exc
 
 

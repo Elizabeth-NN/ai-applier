@@ -327,3 +327,49 @@ def test_jobicy_refresh_endpoint_handles_source_failure(
     assert response.json()["detail"] == (
         "Jobicy could not provide a complete, valid feed."
     )
+
+
+def test_jobicy_status_sync_endpoint_returns_summary(
+    job_context, monkeypatch
+):
+    from app.api import jobs as jobs_api
+
+    monkeypatch.setattr(
+        jobs_api,
+        "sync_jobicy_statuses",
+        lambda _db: {
+            "checked": 3,
+            "active": 1,
+            "closed": 1,
+            "unknown": 1,
+        },
+    )
+
+    response = job_context.post("/api/jobs/sync/jobicy-status")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "checked": 3,
+        "active": 1,
+        "closed": 1,
+        "unknown": 1,
+    }
+
+
+def test_jobicy_status_sync_endpoint_handles_source_failure(
+    job_context, monkeypatch
+):
+    from app.api import jobs as jobs_api
+    from app.services.jobicy_adapter import JobicyAPIError
+
+    def fail(_db):
+        raise JobicyAPIError("Simulated API failure")
+
+    monkeypatch.setattr(jobs_api, "sync_jobicy_statuses", fail)
+
+    response = job_context.post("/api/jobs/sync/jobicy-status")
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == (
+        "Jobicy listing statuses could not be verified."
+    )
