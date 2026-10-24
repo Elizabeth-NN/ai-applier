@@ -141,14 +141,17 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [savingJobId, setSavingJobId] = useState<number | null>(null);
 
+  const dashboardLoading = !isLoaded || (isSignedIn === true && loading);
+  const dashboardError = !isLoaded
+    ? ""
+    : !isSignedIn
+      ? "Sign in to load your jobs and applications."
+      : error;
+
   useEffect(() => {
     if (!isLoaded) return;
 
-    if (!isSignedIn) {
-      setLoading(false);
-      setError("Sign in to load your jobs and applications.");
-      return;
-    }
+    if (!isSignedIn) return;
 
     let cancelled = false;
 
@@ -286,12 +289,16 @@ export default function DashboardPage() {
 
     const maximum = Math.max(...days.map((day) => day.count), 1);
 
-    setActivity(
-      days.map((day) => ({
-        ...day,
-        height: day.count === 0 ? 0 : Math.max(8, (day.count / maximum) * 100),
-      })),
-    );
+    const frame = window.requestAnimationFrame(() => {
+      setActivity(
+        days.map((day) => ({
+          ...day,
+          height: day.count === 0 ? 0 : Math.max(8, (day.count / maximum) * 100),
+        })),
+      );
+    });
+
+    return () => window.cancelAnimationFrame(frame);
   }, [applications]);
 
   async function changeStatus(
@@ -464,7 +471,7 @@ export default function DashboardPage() {
                   YOUR JOB SEARCH
                 </span>
                 <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-500">
-                  {loading ? "Loading" : error ? "Connection issue" : "Live data"}
+                  {dashboardLoading ? "Loading" : dashboardError ? "Connection issue" : "Live data"}
                 </span>
               </div>
               <h1 className="mt-2 text-xl font-extrabold tracking-tight text-slate-900 sm:text-2xl">
@@ -540,13 +547,13 @@ export default function DashboardPage() {
             </div>
           )}
 
-          {error && (
+          {dashboardError && (
             <div role="alert" className="mx-5 mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 sm:mx-8 lg:mx-10">
-              {error}
+              {dashboardError}
             </div>
           )}
 
-          {loading && (
+          {dashboardLoading && (
             <p role="status" className="px-5 pt-4 text-sm text-slate-500 sm:px-8 lg:px-10">
               Loading jobs and applications…
             </p>
@@ -613,7 +620,7 @@ export default function DashboardPage() {
                             weight="fill"
                             className="text-violet-600"
                           />
-                          AI job matches
+                          Available jobs
                         </h2>
                         <p className="mt-1 text-sm text-slate-500">
                           Opportunities selected for your profile
