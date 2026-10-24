@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.auth import CurrentUser
+from app.core.auth import CurrentAdmin
 from app.db.dependencies import get_db
 from app.models.job import Job
 from app.schemas.job import JobCreate, JobRead
@@ -18,7 +18,7 @@ router = APIRouter(prefix="/api/jobs", tags=["Jobs"])
 )
 def create_job(
     payload: JobCreate,
-    user_id: CurrentUser,
+    _admin_id: CurrentAdmin,
     db: Session = Depends(get_db),
 ):
     job = Job(**payload.model_dump())

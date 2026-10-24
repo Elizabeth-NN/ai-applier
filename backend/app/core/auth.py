@@ -1,5 +1,3 @@
-
-from app.core.config import settings
 from typing import Annotated
 
 from clerk_backend_api import (
@@ -8,15 +6,15 @@ from clerk_backend_api import (
 )
 from fastapi import Depends, HTTPException, Request, status
 
+from app.core.config import settings
 
-def require_user(request: Request) -> str:
-    """Verify a Clerk session and return the authenticated Clerk user ID."""
-    secret_key = settings.clerk_secret_key
 
+def _authenticated_payload(request: Request) -> dict:
+    """Validate the Clerk session and return its verified claims."""
     state = authenticate_request(
         request,
         AuthenticateRequestOptions(
-            secret_key=secret_key,
+            secret_key=settings.clerk_secret_key,
             authorized_parties=["http://localhost:3000"],
             accepts_token=["session_token"],
         ),
@@ -29,16 +27,35 @@ def require_user(request: Request) -> str:
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    user_id = state.payload.get("sub") if state.payload else None
+    payload = state.payload or {}
 
-    if not user_id:
+    if not payload.get("sub"):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid authentication token",
         )
 
-    return user_id
+    return payload
+
+
+def require_user(request: Request) -> str:
+    """Return the authenticated Clerk user ID."""
+    return _authenticated_payload(request)["sub"]
+
+
+def require_admin(request: Request) -> str:
+    """Allow only users with the trusted Clerk admin role."""
+    payload = _authenticated_payload(request)
+    metadata = payload.get("metadata")
+
+    if not isinstance(metadata, dict) or metadata.get("role") != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required",
+        )
+
+    return payload["sub"]
 
 
 CurrentUser = Annotated[str, Depends(require_user)]
-
+CurrentAdmin = Annotated[str, Depends(require_admin)]

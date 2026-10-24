@@ -5,7 +5,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.core.auth import require_user
+from app.core.auth import require_admin
 from app.db.dependencies import get_db
 from app.db.session import Base
 from app.main import app
@@ -33,7 +33,7 @@ def job_context():
             db.close()
 
     app.dependency_overrides[get_db] = override_get_db
-    app.dependency_overrides[require_user] = lambda: "user_test_1"
+    app.dependency_overrides[require_admin] = lambda: "user_admin"
 
     try:
         with TestClient(app) as client:
@@ -74,7 +74,7 @@ def test_job_creation_requires_authentication(job_context):
             detail="Not authenticated",
         )
 
-    app.dependency_overrides[require_user] = reject_user
+    app.dependency_overrides[require_admin] = reject_user
 
     response = job_context.post("/api/jobs", json=valid_job())
 
@@ -134,3 +134,18 @@ def test_get_missing_job_returns_404(job_context):
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Job not found"
+
+
+def test_non_admin_cannot_create_job(job_context):
+    def reject_non_admin():
+        raise HTTPException(
+            status_code=403,
+            detail="Admin access required",
+        )
+
+    app.dependency_overrides[require_admin] = reject_non_admin
+
+    response = job_context.post("/api/jobs", json=valid_job())
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Admin access required"
