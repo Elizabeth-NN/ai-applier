@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.auth import CurrentUser
 from app.db.dependencies import get_db
 from app.models.job import Job
 from app.schemas.job import JobCreate, JobRead
@@ -15,7 +16,11 @@ router = APIRouter(prefix="/api/jobs", tags=["Jobs"])
     response_model=JobRead,
     status_code=status.HTTP_201_CREATED,
 )
-def create_job(payload: JobCreate, db: Session = Depends(get_db)):
+def create_job(
+    payload: JobCreate,
+    user_id: CurrentUser,
+    db: Session = Depends(get_db),
+):
     job = Job(**payload.model_dump())
 
     db.add(job)
