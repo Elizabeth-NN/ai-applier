@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useAuth } from "@clerk/nextjs";
 import {
   SquaresFour,
@@ -140,6 +140,18 @@ export default function DashboardPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [savingJobId, setSavingJobId] = useState<number | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [showJobForm, setShowJobForm] = useState(false);
+  const [creatingJob, setCreatingJob] = useState(false);
+  const [jobFormError, setJobFormError] = useState("");
+  const [jobForm, setJobForm] = useState({
+    title: "",
+    company: "",
+    location: "",
+    employment_type: "",
+    source_url: "",
+    description: "",
+  });
 
   const dashboardLoading = !isLoaded || (isSignedIn === true && loading);
   const dashboardError = !isLoaded
@@ -165,14 +177,19 @@ export default function DashboardPage() {
           throw new Error("No Clerk session token is available.");
         }
 
-        const [loadedJobs, loadedApplications] = await Promise.all([
-          apiRequest<ApiJob[]>("/api/jobs?limit=100", token),
-          apiRequest<ApiApplication[]>("/api/applications?limit=100", token),
-        ]);
+        const [loadedJobs, loadedApplications, hasAdminAccess] =
+          await Promise.all([
+            apiRequest<ApiJob[]>("/api/jobs?limit=100", token),
+            apiRequest<ApiApplication[]>("/api/applications?limit=100", token),
+            apiRequest<{ is_admin: boolean }>("/api/admin/status", token)
+              .then((result) => result.is_admin)
+              .catch(() => false),
+          ]);
 
         if (!cancelled) {
           setApiJobs(loadedJobs);
           setApplications(loadedApplications);
+          setIsAdmin(hasAdminAccess);
         }
       } catch (err) {
         if (!cancelled) {
@@ -377,6 +394,54 @@ export default function DashboardPage() {
     }
   }
 
+  async function createJob(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setCreatingJob(true);
+    setJobFormError("");
+    setError("");
+
+    try {
+      const token = await getToken();
+      if (!token) {
+        throw new Error("Your session has expired. Please sign in again.");
+      }
+
+      const createdJob = await apiRequest<ApiJob>("/api/jobs", token, {
+        method: "POST",
+        body: JSON.stringify({
+          title: jobForm.title.trim(),
+          company: jobForm.company.trim(),
+          location: jobForm.location.trim() || null,
+          employment_type: jobForm.employment_type || null,
+          source_url: jobForm.source_url.trim() || null,
+          description: jobForm.description.trim() || null,
+        }),
+      });
+
+      setApiJobs((current) => [
+        createdJob,
+        ...current.filter((job) => job.id !== createdJob.id),
+      ]);
+      setJobForm({
+        title: "",
+        company: "",
+        location: "",
+        employment_type: "",
+        source_url: "",
+        description: "",
+      });
+      setShowJobForm(false);
+      setActivePage("Dashboard");
+      setNotice("Job added successfully.");
+    } catch (err) {
+      setJobFormError(
+        err instanceof Error ? err.message : "Could not create the job.",
+      );
+    } finally {
+      setCreatingJob(false);
+    }
+  }
+
   function startApplication() {
     setActivePage("Job Matches");
     setNotice("Choose a job to save to your application pipeline.");
@@ -520,6 +585,20 @@ export default function DashboardPage() {
                 <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-violet-500 ring-2 ring-white" />
               </button>
 
+              {isAdmin && (
+                <button
+                  onClick={() => {
+                    setShowJobForm((visible) => !visible);
+                    setJobFormError("");
+                  }}
+                  aria-expanded={showJobForm}
+                  className="flex shrink-0 items-center gap-2 rounded-xl border border-violet-200 bg-white px-3 py-2.5 text-sm font-semibold text-violet-700 transition hover:bg-violet-50 sm:px-4"
+                >
+                  <Plus size={18} />
+                  <span>{showJobForm ? "Close form" : "Add job"}</span>
+                </button>
+              )}
+
               <button
                 onClick={startApplication}
                 className="flex shrink-0 items-center gap-2 rounded-xl bg-violet-600 px-3 py-2.5 text-sm font-semibold text-white shadow-sm shadow-violet-200 transition hover:bg-violet-700 sm:px-4"
@@ -560,6 +639,122 @@ export default function DashboardPage() {
           )}
 
           <div className="custom-scrollbar flex-1 space-y-8 overflow-y-auto p-5 pb-24 sm:p-8 sm:pb-24 lg:p-10">
+            {showJobForm && isAdmin && (
+              <section className="rounded-2xl border border-violet-200 bg-white p-5 shadow-sm sm:p-7">
+                <div className="mb-5">
+                  <h2 className="text-lg font-bold text-slate-900">Add a job listing</h2>
+                  <p className="mt-1 text-sm text-slate-500">
+                    Add an opportunity for users to discover and track.
+                  </p>
+                </div>
+
+                <form onSubmit={createJob} className="space-y-4">
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <label className="block text-sm font-medium text-slate-700">
+                      Job title *
+                      <input
+                        required
+                        maxLength={255}
+                        value={jobForm.title}
+                        onChange={(event) => setJobForm((current) => ({ ...current, title: event.target.value }))}
+                        className="mt-1.5 w-full rounded-xl border border-slate-200 px-3 py-2.5 font-normal outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
+                        placeholder="e.g. Junior Backend Developer"
+                      />
+                    </label>
+
+                    <label className="block text-sm font-medium text-slate-700">
+                      Company *
+                      <input
+                        required
+                        maxLength={255}
+                        value={jobForm.company}
+                        onChange={(event) => setJobForm((current) => ({ ...current, company: event.target.value }))}
+                        className="mt-1.5 w-full rounded-xl border border-slate-200 px-3 py-2.5 font-normal outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
+                        placeholder="Company name"
+                      />
+                    </label>
+
+                    <label className="block text-sm font-medium text-slate-700">
+                      Location
+                      <input
+                        maxLength={255}
+                        value={jobForm.location}
+                        onChange={(event) => setJobForm((current) => ({ ...current, location: event.target.value }))}
+                        className="mt-1.5 w-full rounded-xl border border-slate-200 px-3 py-2.5 font-normal outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
+                        placeholder="e.g. Remote or Nairobi, Kenya"
+                      />
+                    </label>
+
+                    <label className="block text-sm font-medium text-slate-700">
+                      Employment type
+                      <select
+                        value={jobForm.employment_type}
+                        onChange={(event) => setJobForm((current) => ({ ...current, employment_type: event.target.value }))}
+                        className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 font-normal outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
+                      >
+                        <option value="">Not specified</option>
+                        <option value="Full-time">Full-time</option>
+                        <option value="Part-time">Part-time</option>
+                        <option value="Contract">Contract</option>
+                        <option value="Internship">Internship</option>
+                        <option value="Temporary">Temporary</option>
+                      </select>
+                    </label>
+
+                    <label className="block text-sm font-medium text-slate-700 sm:col-span-2">
+                      Job URL
+                      <input
+                        type="url"
+                        maxLength={2048}
+                        value={jobForm.source_url}
+                        onChange={(event) => setJobForm((current) => ({ ...current, source_url: event.target.value }))}
+                        className="mt-1.5 w-full rounded-xl border border-slate-200 px-3 py-2.5 font-normal outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
+                        placeholder="https://company.com/careers/job"
+                      />
+                    </label>
+
+                    <label className="block text-sm font-medium text-slate-700 sm:col-span-2">
+                      Description
+                      <textarea
+                        rows={5}
+                        value={jobForm.description}
+                        onChange={(event) => setJobForm((current) => ({ ...current, description: event.target.value }))}
+                        className="mt-1.5 w-full resize-y rounded-xl border border-slate-200 px-3 py-2.5 font-normal outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
+                        placeholder="Responsibilities, requirements, qualifications, and application instructions..."
+                      />
+                    </label>
+                  </div>
+
+                  {jobFormError && (
+                    <p role="alert" className="rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-700">
+                      {jobFormError}
+                    </p>
+                  )}
+
+                  <div className="flex flex-wrap justify-end gap-3">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowJobForm(false);
+                        setJobFormError("");
+                      }}
+                      disabled={creatingJob}
+                      className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={creatingJob}
+                      className="rounded-xl bg-violet-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {creatingJob ? "Creating job..." : "Create job"}
+                    </button>
+                  </div>
+                </form>
+              </section>
+            )}
+
             {activePage !== "Dashboard" &&
               activePage !== "Job Matches" &&
               activePage !== "Applications" && (

@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.applications import router as applications_router
 from app.api.jobs import router as jobs_router
 from app.db.session import engine
-from app.core.auth import CurrentUser
+from app.core.auth import CurrentAdmin, CurrentUser
 
 app = FastAPI(
     title="AI Applier API",
@@ -58,3 +58,8 @@ def database_health():
 @app.get("/api/me")
 def get_current_user(user_id: CurrentUser):
     return {"user_id": user_id}
+
+
+@app.get("/api/admin/status")
+def get_admin_status(_admin_id: CurrentAdmin):
+    return {"is_admin": True}
