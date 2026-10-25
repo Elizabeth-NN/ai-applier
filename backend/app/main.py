@@ -3,6 +3,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.application_batches import router as application_batches_router
 from app.api.applications import router as applications_router
 from app.api.jobs import router as jobs_router
 from app.db.session import engine
@@ -24,6 +25,7 @@ app.add_middleware(
 
 app.include_router(jobs_router)
 app.include_router(applications_router)
+app.include_router(application_batches_router)
 
 
 @app.get("/")
