@@ -29,6 +29,7 @@ import {
 } from "@phosphor-icons/react";
 import Navbar from "@/components/Navbar";
 import BackendAuthCheck from "@/components/BackendAuthCheck";
+import ApplicationBatches from "@/components/ApplicationBatches";
 
 type ApiJob = {
   id: number;
@@ -119,6 +120,7 @@ const navItems = [
   { label: "Job Matches", icon: Lightning, badge: "3" },
   { label: "My Documents", icon: Files },
   { label: "Applications", icon: Briefcase },
+  { label: "Application Batches", icon: CheckCircle },
   { label: "Insights", icon: ChartPieSlice },
 ];
 
@@ -938,7 +940,8 @@ export default function DashboardPage() {
 
             {activePage !== "Dashboard" &&
               activePage !== "Job Matches" &&
-              activePage !== "Applications" && (
+              activePage !== "Applications" &&
+              activePage !== "Application Batches" && (
                 <section className="rounded-2xl border border-slate-200 bg-white p-6 sm:p-8">
                   <Sparkle size={28} className="mb-4 text-violet-600" />
                   <h2 className="text-lg font-bold">{activePage}</h2>
@@ -955,6 +958,8 @@ export default function DashboardPage() {
                   </button>
                 </section>
               )}
+
+            {activePage === "Application Batches" && <ApplicationBatches />}
 
             {activePage === "Dashboard" && (
               <>
