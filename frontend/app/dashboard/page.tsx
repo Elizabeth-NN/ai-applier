@@ -133,6 +133,12 @@ export default function DashboardPage() {
   const { isLoaded, isSignedIn, getToken } = useAuth();
   const [activePage, setActivePage] = useState("Dashboard");
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [jobPage, setJobPage] = useState(1);
+  const [jobTotal, setJobTotal] = useState(0);
+  const [jobsLoading, setJobsLoading] = useState(false);
+  const [jobsRefreshKey, setJobsRefreshKey] = useState(0);
+  const pageSize = 20;
   const [view, setView] = useState<"board" | "list">("board");
   const [apiJobs, setApiJobs] = useState<ApiJob[]>([]);
   const [applications, setApplications] = useState<ApiApplication[]>([]);
@@ -178,17 +184,14 @@ export default function DashboardPage() {
           throw new Error("No Clerk session token is available.");
         }
 
-        const [loadedJobs, loadedApplications, hasAdminAccess] =
-          await Promise.all([
-            apiRequest<ApiJob[]>("/api/jobs?limit=100", token),
-            apiRequest<ApiApplication[]>("/api/applications?limit=100", token),
-            apiRequest<{ is_admin: boolean }>("/api/admin/status", token)
-              .then((result) => result.is_admin)
-              .catch(() => false),
-          ]);
+        const [loadedApplications, hasAdminAccess] = await Promise.all([
+          apiRequest<ApiApplication[]>("/api/applications?limit=100", token),
+          apiRequest<{ is_admin: boolean }>("/api/admin/status", token)
+            .then((result) => result.is_admin)
+            .catch(() => false),
+        ]);
 
         if (!cancelled) {
-          setApiJobs(loadedJobs);
           setApplications(loadedApplications);
           setIsAdmin(hasAdminAccess);
         }
@@ -211,6 +214,70 @@ export default function DashboardPage() {
       cancelled = true;
     };
   }, [isLoaded, isSignedIn, getToken]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(search.trim());
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  useEffect(() => {
+    if (!isLoaded || !isSignedIn) return;
+
+    let cancelled = false;
+
+    async function loadJobs() {
+      setJobsLoading(true);
+
+      try {
+        const token = await getToken();
+        if (!token) {
+          throw new Error("No Clerk session token is available.");
+        }
+
+        const params = new URLSearchParams({
+          q: debouncedSearch,
+          skip: String((jobPage - 1) * pageSize),
+          limit: String(pageSize),
+        });
+
+        const result = await apiRequest<{
+          items: ApiJob[];
+          total: number;
+          skip: number;
+          limit: number;
+        }>(`/api/jobs/search?${params.toString()}`, token);
+
+        if (!cancelled) {
+          setApiJobs(result.items);
+          setJobTotal(result.total);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(
+            err instanceof Error ? err.message : "Could not load jobs.",
+          );
+        }
+      } finally {
+        if (!cancelled) setJobsLoading(false);
+      }
+    }
+
+    void loadJobs();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    isLoaded,
+    isSignedIn,
+    getToken,
+    debouncedSearch,
+    jobPage,
+    jobsRefreshKey,
+  ]);
 
   const jobs = useMemo<Job[]>(
     () =>
@@ -235,15 +302,11 @@ export default function DashboardPage() {
     [apiJobs, applications],
   );
 
-  const filteredJobs = useMemo(() => {
-    const term = search.trim().toLowerCase();
+  const filteredJobs = jobs;
 
-    return jobs.filter((job) =>
-      `${job.title} ${job.company} ${job.location}`
-        .toLowerCase()
-        .includes(term),
-    );
-  }, [jobs, search]);
+  const totalPages = Math.max(1, Math.ceil(jobTotal / pageSize));
+  const firstResult = jobTotal === 0 ? 0 : (jobPage - 1) * pageSize + 1;
+  const lastResult = Math.min(jobPage * pageSize, jobTotal);
 
   const trackedJobs = useMemo(
     () => filteredJobs.filter((job) => job.applicationId !== null),
@@ -253,8 +316,8 @@ export default function DashboardPage() {
   const stats = [
     {
       label: "Available jobs",
-      value: String(apiJobs.length),
-      delta: "Loaded from backend",
+      value: String(jobTotal),
+      delta: "Jobs in search results",
       icon: Binoculars,
       style: "bg-indigo-50 text-indigo-600",
     },
@@ -416,12 +479,8 @@ export default function DashboardPage() {
         method: "POST",
       });
 
-      const refreshedJobs = await apiRequest<ApiJob[]>(
-        "/api/jobs?limit=100",
-        token,
-      );
-
-      setApiJobs(refreshedJobs);
+      setJobPage(1);
+      setJobsRefreshKey((current) => current + 1);
       setNotice(
         `Jobicy import complete: ${result.fetched} fetched, ` +
         `${result.inserted} inserted, ${result.updated} updated.`,
@@ -449,7 +508,7 @@ export default function DashboardPage() {
         throw new Error("Your session has expired. Please sign in again.");
       }
 
-      const createdJob = await apiRequest<ApiJob>("/api/jobs", token, {
+      await apiRequest<ApiJob>("/api/jobs", token, {
         method: "POST",
         body: JSON.stringify({
           title: jobForm.title.trim(),
@@ -461,10 +520,8 @@ export default function DashboardPage() {
         }),
       });
 
-      setApiJobs((current) => [
-        createdJob,
-        ...current.filter((job) => job.id !== createdJob.id),
-      ]);
+      setJobPage(1);
+      setJobsRefreshKey((current) => current + 1);
       setJobForm({
         title: "",
         company: "",
@@ -600,7 +657,10 @@ export default function DashboardPage() {
                 />
                 <input
                   value={search}
-                  onChange={(event) => setSearch(event.target.value)}
+                  onChange={(event) => {
+                    setSearch(event.target.value);
+                    setJobPage(1);
+                  }}
                   placeholder="Search jobs..."
                   aria-label="Search jobs"
                   className="w-full min-w-0 bg-transparent text-base outline-none placeholder:text-slate-400 sm:text-sm"
@@ -1238,6 +1298,39 @@ export default function DashboardPage() {
                     </table>
                   </div>
                 )}
+
+                <div className="flex flex-col gap-3 border-t border-slate-200 pt-4 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="text-sm text-slate-500" aria-live="polite">
+                    {jobsLoading
+                      ? "Searching jobs..."
+                      : jobTotal === 0
+                        ? "No jobs found"
+                        : `Showing ${firstResult}–${lastResult} of ${jobTotal} jobs`}
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setJobPage((page) => Math.max(1, page - 1))}
+                      disabled={jobsLoading || jobPage <= 1}
+                      className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Previous
+                    </button>
+                    <span className="min-w-24 text-center text-sm text-slate-600">
+                      Page {Math.min(jobPage, totalPages)} of {totalPages}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setJobPage((page) => Math.min(totalPages, page + 1))
+                      }
+                      disabled={jobsLoading || jobPage >= totalPages}
+                      className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
               </section>
             )}
 
