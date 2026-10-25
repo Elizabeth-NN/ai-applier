@@ -142,6 +142,7 @@ export default function DashboardPage() {
   const [view, setView] = useState<"board" | "list">("board");
   const [apiJobs, setApiJobs] = useState<ApiJob[]>([]);
   const [applications, setApplications] = useState<ApiApplication[]>([]);
+  const [trackedApiJobs, setTrackedApiJobs] = useState<ApiJob[]>([]);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -308,9 +309,71 @@ export default function DashboardPage() {
   const firstResult = jobTotal === 0 ? 0 : (jobPage - 1) * pageSize + 1;
   const lastResult = Math.min(jobPage * pageSize, jobTotal);
 
-  const trackedJobs = useMemo(
-    () => filteredJobs.filter((job) => job.applicationId !== null),
-    [filteredJobs],
+  useEffect(() => {
+    if (!isLoaded || !isSignedIn) return;
+
+    let cancelled = false;
+
+    async function loadTrackedJobs() {
+      try {
+        const token = await getToken();
+
+        if (!token) {
+          throw new Error("No Clerk session token is available.");
+        }
+
+        const jobIds = [...new Set(applications.map((item) => item.job_id))];
+
+        const loadedJobs = await Promise.all(
+          jobIds.map((jobId) =>
+            apiRequest<ApiJob>(`/api/jobs/${jobId}`, token),
+          ),
+        );
+
+        if (!cancelled) {
+          setTrackedApiJobs(loadedJobs);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(
+            err instanceof Error
+              ? err.message
+              : "Could not load tracked application jobs.",
+          );
+        }
+      }
+    }
+
+    void loadTrackedJobs();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isLoaded, isSignedIn, getToken, applications]);
+
+  const trackedJobs = useMemo<Job[]>(
+    () =>
+      trackedApiJobs.flatMap((job, index) => {
+        const application = applications.find(
+          (item) => item.job_id === job.id,
+        );
+
+        if (!application) return [];
+
+        return [{
+          id: job.id,
+          company: job.company,
+          title: job.title,
+          location: job.location || "Location not specified",
+          createdAt: new Date(job.created_at).toLocaleDateString(),
+          color: companyColors[index % companyColors.length],
+          letter: job.company.trim().charAt(0).toUpperCase() || "J",
+          applicationId: application.id,
+          apiStatus: application.status,
+          status: statusLabels[application.status],
+        }];
+      }),
+    [trackedApiJobs, applications],
   );
 
   const stats = [
@@ -550,9 +613,9 @@ export default function DashboardPage() {
   return (
     <>
     <Navbar />
-    <div className="min-h-dvh pt-[68px] lg:h-dvh lg:overflow-hidden">
-      <div className="flex min-h-dvh lg:h-full">
-        <aside className="hidden w-64 shrink-0 flex-col bg-[#101323] text-white lg:flex">
+    <div className="min-h-dvh pt-[68px]">
+      <div className="flex min-h-[calc(100dvh-68px)]">
+        <aside className="hidden w-64 shrink-0 flex-col bg-[#101323] text-white lg:sticky lg:top-[68px] lg:flex lg:h-[calc(100dvh-68px)] lg:overflow-y-auto">
           {/* <div className="flex items-center gap-3 px-6 py-7">
             <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-violet-500 to-fuchsia-500">
               <Robot size={23} weight="fill" />
@@ -625,7 +688,7 @@ export default function DashboardPage() {
           </div>
         </aside>
 
-        <main className="flex min-w-0 flex-1 flex-col lg:h-full lg:overflow-hidden">
+        <main className="flex min-w-0 flex-1 flex-col">
           <div className="px-5 pt-5 sm:px-8 lg:px-10">
             <BackendAuthCheck />
           </div>
@@ -650,6 +713,7 @@ export default function DashboardPage() {
             </div>
 
             <div className="flex w-full items-center gap-2 sm:w-auto sm:gap-3">
+{activePage === "Job Matches" && (
               <label className="flex min-w-0 flex-1 items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 focus-within:border-violet-300 sm:w-60 sm:flex-none">
                 <MagnifyingGlass
                   size={18}
@@ -675,6 +739,7 @@ export default function DashboardPage() {
                   </button>
                 )}
               </label>
+              )}
 
               <button
                 aria-label="Notifications"
@@ -754,7 +819,7 @@ export default function DashboardPage() {
             </p>
           )}
 
-          <div className="custom-scrollbar flex-1 space-y-8 overflow-y-auto p-5 pb-24 sm:p-8 sm:pb-24 lg:p-10">
+          <div className="space-y-8 p-5 pb-24 sm:p-8 sm:pb-24 lg:p-10">
             {showJobForm && isAdmin && (
               <section className="rounded-2xl border border-violet-200 bg-white p-5 shadow-sm sm:p-7">
                 <div className="mb-5">
@@ -891,8 +956,7 @@ export default function DashboardPage() {
                 </section>
               )}
 
-            {(activePage === "Dashboard" ||
-              activePage === "Applications") && (
+            {activePage === "Dashboard" && (
               <>
                 <section className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
                   {stats.map(({ label, value, delta, icon: Icon, style }) => (
@@ -920,8 +984,13 @@ export default function DashboardPage() {
                     </article>
                   ))}
                 </section>
+              </>
+            )}
 
-                <section className="grid grid-cols-1 gap-6 xl:grid-cols-3">
+            {(activePage === "Dashboard" ||
+              activePage === "Job Matches") && (
+              <section className={`grid grid-cols-1 gap-6 ${activePage === "Dashboard" ? "xl:grid-cols-1" : "xl:grid-cols-3"}`}>
+                  {activePage === "Job Matches" && (
                   <div className="space-y-4 xl:col-span-2">
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div>
@@ -1034,8 +1103,41 @@ export default function DashboardPage() {
                         </article>
                       ))}
                     </div>
-                  </div>
 
+                    <div className="flex flex-col gap-3 border-t border-slate-200 pt-4 sm:flex-row sm:items-center sm:justify-between">
+                      <p className="text-sm text-slate-500" aria-live="polite">
+                        {jobsLoading
+                          ? "Searching jobs..."
+                          : jobTotal === 0
+                            ? "No jobs found"
+                            : `Showing ${firstResult}–${lastResult} of ${jobTotal} jobs`}
+                      </p>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setJobPage((page) => Math.max(1, page - 1))}
+                          disabled={jobsLoading || jobPage <= 1}
+                          className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          Previous
+                        </button>
+                        <span className="min-w-24 text-center text-sm text-slate-600">
+                          Page {Math.min(jobPage, totalPages)} of {totalPages}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setJobPage((page) => Math.min(totalPages, page + 1))}
+                          disabled={jobsLoading || jobPage >= totalPages}
+                          className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          Next
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                  )}
+
+                  {activePage === "Dashboard" && (
                   <article className="flex flex-col rounded-2xl bg-[#111426] p-5 text-white sm:p-6">
                     <div className="flex items-center justify-between">
                       <div>
@@ -1094,13 +1196,11 @@ export default function DashboardPage() {
                       View insights <ArrowUpRight size={17} />
                     </button>
                   </article>
-                </section>
-              </>
+                  )}
+              </section>
             )}
 
-            {(activePage === "Dashboard" ||
-              activePage === "Applications" ||
-              activePage === "Job Matches") && (
+            {activePage === "Applications" && (
               <section className="space-y-4 pb-5">
                 <div className="flex flex-wrap items-end justify-between gap-4">
                   <div>
@@ -1244,15 +1344,12 @@ export default function DashboardPage() {
                             Status
                           </th>
                           <th className="px-4 py-4 font-semibold sm:px-5">
-                            Status
-                          </th>
-                          <th className="px-4 py-4 font-semibold sm:px-5">
                             Action
                           </th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
-                        {filteredJobs.map((job) => (
+                        {trackedJobs.map((job) => (
                           <tr key={job.id}>
                             <td className="px-4 py-4 sm:px-5">
                               <p className="font-semibold text-slate-800">
@@ -1264,9 +1361,6 @@ export default function DashboardPage() {
                             </td>
                             <td className="hidden px-5 py-4 text-slate-600 sm:table-cell">
                               {job.location}
-                            </td>
-                            <td className="px-4 py-4 text-slate-600 sm:px-5">
-                              {job.status === "Available" ? "Not tracked" : job.status}
                             </td>
                             <td className="px-4 py-4 text-slate-600 sm:px-5">
                               {job.status}
@@ -1299,38 +1393,7 @@ export default function DashboardPage() {
                   </div>
                 )}
 
-                <div className="flex flex-col gap-3 border-t border-slate-200 pt-4 sm:flex-row sm:items-center sm:justify-between">
-                  <p className="text-sm text-slate-500" aria-live="polite">
-                    {jobsLoading
-                      ? "Searching jobs..."
-                      : jobTotal === 0
-                        ? "No jobs found"
-                        : `Showing ${firstResult}–${lastResult} of ${jobTotal} jobs`}
-                  </p>
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setJobPage((page) => Math.max(1, page - 1))}
-                      disabled={jobsLoading || jobPage <= 1}
-                      className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
-                    >
-                      Previous
-                    </button>
-                    <span className="min-w-24 text-center text-sm text-slate-600">
-                      Page {Math.min(jobPage, totalPages)} of {totalPages}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setJobPage((page) => Math.min(totalPages, page + 1))
-                      }
-                      disabled={jobsLoading || jobPage >= totalPages}
-                      className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
-                    >
-                      Next
-                    </button>
-                  </div>
-                </div>
+
               </section>
             )}
 
