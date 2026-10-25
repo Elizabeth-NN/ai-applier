@@ -31,3 +31,11 @@ class JobRead(BaseModel):
     published_at: datetime | None
     last_seen_at: datetime | None
     created_at: datetime
+
+
+
+class JobSearchResult(BaseModel):
+    items: list[JobRead]
+    total: int
+    skip: int
+    limit: int
