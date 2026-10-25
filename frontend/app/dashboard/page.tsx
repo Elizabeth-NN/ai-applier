@@ -141,6 +141,7 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [savingJobId, setSavingJobId] = useState<number | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [isImportingJobicy, setIsImportingJobicy] = useState(false);
   const [showJobForm, setShowJobForm] = useState(false);
   const [creatingJob, setCreatingJob] = useState(false);
   const [jobFormError, setJobFormError] = useState("");
@@ -394,6 +395,48 @@ export default function DashboardPage() {
     }
   }
 
+  async function importJobicy() {
+    if (isImportingJobicy) return;
+
+    setIsImportingJobicy(true);
+    setError("");
+    setNotice("");
+
+    try {
+      const token = await getToken();
+      if (!token) {
+        throw new Error("Your session has expired. Please sign in again.");
+      }
+
+      const result = await apiRequest<{
+        fetched: number;
+        inserted: number;
+        updated: number;
+      }>("/api/jobs/ingest/jobicy", token, {
+        method: "POST",
+      });
+
+      const refreshedJobs = await apiRequest<ApiJob[]>(
+        "/api/jobs?limit=100",
+        token,
+      );
+
+      setApiJobs(refreshedJobs);
+      setNotice(
+        `Jobicy import complete: ${result.fetched} fetched, ` +
+        `${result.inserted} inserted, ${result.updated} updated.`,
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Could not import Jobicy jobs.",
+      );
+    } finally {
+      setIsImportingJobicy(false);
+    }
+  }
+
   async function createJob(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setCreatingJob(true);
@@ -584,6 +627,19 @@ export default function DashboardPage() {
                 <Bell size={19} />
                 <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-violet-500 ring-2 ring-white" />
               </button>
+
+              {isAdmin && (
+                <button
+                  type="button"
+                  onClick={importJobicy}
+                  disabled={isImportingJobicy}
+                  className="flex shrink-0 items-center gap-2 rounded-xl border border-emerald-200 bg-white px-3 py-2.5 text-sm font-semibold text-emerald-700 transition hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60 sm:px-4"
+                >
+                  <span>
+                    {isImportingJobicy ? "Importing jobs..." : "Import Jobicy jobs"}
+                  </span>
+                </button>
+              )}
 
               {isAdmin && (
                 <button

@@ -20,3 +20,6 @@ htmlcov/
 # Local databases
 *.sqlite
 *.sqlite3
+
+# Local database backups
+backend/backups/
