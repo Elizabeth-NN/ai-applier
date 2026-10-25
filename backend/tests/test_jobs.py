@@ -373,3 +373,110 @@ def test_jobicy_status_sync_endpoint_handles_source_failure(
     assert response.json()["detail"] == (
         "Jobicy listing statuses could not be verified."
     )
+
+
+def test_job_search_matches_title_company_and_location(job_context):
+    jobs = [
+        {
+            **valid_job(),
+            "title": "Junior Python Developer",
+            "company": "Acme",
+            "location": "Remote",
+        },
+        {
+            **valid_job(),
+            "title": "Frontend Engineer",
+            "company": "Python Works",
+            "location": "Nairobi",
+        },
+        {
+            **valid_job(),
+            "title": "QA Engineer",
+            "company": "Example Ltd",
+            "location": "Kenya",
+        },
+    ]
+
+    for payload in jobs:
+        response = job_context.post("/api/jobs", json=payload)
+        assert response.status_code == 201
+
+    title_result = job_context.get(
+        "/api/jobs/search", params={"q": "junior python"}
+    )
+    company_result = job_context.get(
+        "/api/jobs/search", params={"q": "Python Works"}
+    )
+    location_result = job_context.get(
+        "/api/jobs/search", params={"q": "Nairobi"}
+    )
+
+    assert title_result.status_code == 200
+    assert title_result.json()["total"] == 1
+    assert title_result.json()["items"][0]["title"] == (
+        "Junior Python Developer"
+    )
+
+    assert company_result.json()["total"] == 1
+    assert company_result.json()["items"][0]["company"] == "Python Works"
+
+    assert location_result.json()["total"] == 1
+    assert location_result.json()["items"][0]["location"] == "Nairobi"
+
+
+def test_job_search_paginates_and_reports_total(job_context):
+    for index in range(5):
+        payload = {
+            **valid_job(),
+            "title": f"Python Developer {index}",
+        }
+        assert job_context.post("/api/jobs", json=payload).status_code == 201
+
+    first_page = job_context.get(
+        "/api/jobs/search",
+        params={"q": "Python Developer", "skip": 0, "limit": 2},
+    )
+    second_page = job_context.get(
+        "/api/jobs/search",
+        params={"q": "Python Developer", "skip": 2, "limit": 2},
+    )
+
+    assert first_page.status_code == 200
+    assert first_page.json()["total"] == 5
+    assert len(first_page.json()["items"]) == 2
+    assert first_page.json()["skip"] == 0
+    assert first_page.json()["limit"] == 2
+
+    assert second_page.json()["total"] == 5
+    assert len(second_page.json()["items"]) == 2
+
+    first_ids = {job["id"] for job in first_page.json()["items"]}
+    second_ids = {job["id"] for job in second_page.json()["items"]}
+    assert first_ids.isdisjoint(second_ids)
+
+
+def test_job_search_without_query_returns_all_jobs(job_context):
+    for index in range(3):
+        payload = {
+            **valid_job(),
+            "title": f"Test Developer {index}",
+        }
+        assert job_context.post("/api/jobs", json=payload).status_code == 201
+
+    response = job_context.get(
+        "/api/jobs/search", params={"limit": 2}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["total"] == 3
+    assert len(response.json()["items"]) == 2
+
+
+def test_job_search_rejects_invalid_pagination(job_context):
+    assert job_context.get(
+        "/api/jobs/search", params={"skip": -1}
+    ).status_code == 422
+
+    assert job_context.get(
+        "/api/jobs/search", params={"limit": 101}
+    ).status_code == 422
