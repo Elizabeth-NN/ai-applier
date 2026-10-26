@@ -27,6 +27,10 @@ class JobRead(BaseModel):
     remote_type: str | None
     eligible_countries: list[str] | None
     eligibility_status: str
+    eligibility_evidence_url: str | None
+    eligibility_evidence: str | None
+    eligibility_verified_at: datetime | None
+    eligibility_verified_by: str | None
     listing_status: str
     published_at: datetime | None
     last_seen_at: datetime | None

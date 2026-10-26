@@ -1319,6 +1319,16 @@ export default function DashboardPage() {
                     >
                       View insights <ArrowUpRight size={17} />
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setJobPage(1);
+                        setActivePage("Job Matches");
+                      }}
+                      className="mt-3 flex items-center justify-center gap-2 rounded-xl bg-violet-600 py-3 text-sm font-semibold text-white transition hover:bg-violet-700"
+                    >
+                      All matches <CaretRight size={17} />
+                    </button>
                   </article>
                   )}
               </section>

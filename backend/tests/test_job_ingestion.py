@@ -93,6 +93,52 @@ def test_ingestion_updates_existing_job_without_duplicate(
     assert job.title == "Updated Python Developer"
 
 
+
+def test_ingestion_preserves_verified_metadata_when_feed_is_unknown(
+    db_session, monkeypatch
+):
+    existing = Job(
+        title="Original Python Developer",
+        company="Example Company",
+        location="Kenya",
+        description="Existing detailed description.",
+        source_url="https://jobicy.com/jobs/123",
+        employment_type="Full-time",
+        source_name="jobicy",
+        source_job_id="123",
+        remote_type="remote",
+        eligible_countries=["Kenya"],
+        eligibility_status="eligible",
+        listing_status="active",
+    )
+    db_session.add(existing)
+    db_session.commit()
+
+    fields = incoming_job(title="Updated Python Developer")
+    fields["location"] = None
+    fields["description"] = None
+    fields["employment_type"] = None
+
+    monkeypatch.setattr(
+        job_ingestion,
+        "fetch_jobicy_jobs",
+        lambda: [fields],
+    )
+
+    result = job_ingestion.ingest_jobicy_jobs(db_session)
+
+    db_session.refresh(existing)
+
+    assert result == {"fetched": 1, "inserted": 0, "updated": 1}
+    assert existing.title == "Updated Python Developer"
+    assert existing.eligible_countries == ["Kenya"]
+    assert existing.eligibility_status == "eligible"
+    assert existing.listing_status == "active"
+    assert existing.location == "Kenya"
+    assert existing.description == "Existing detailed description."
+    assert existing.employment_type == "Full-time"
+    assert existing.last_seen_at is not None
+
 def test_ingestion_failure_does_not_change_existing_jobs(
     db_session, monkeypatch
 ):

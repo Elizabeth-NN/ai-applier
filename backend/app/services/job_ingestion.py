@@ -37,7 +37,22 @@ def ingest_jobicy_jobs(db: Session) -> dict[str, int]:
                 inserted += 1
             else:
                 for field, value in fields.items():
-                    setattr(existing, field, value)
+                    # Feed data must not erase useful existing values when
+                    # the source omits a field or returns None.
+                    if value is None:
+                        continue
+
+                    # The public feed does not establish country eligibility
+                    # or listing status. Preserve existing verified metadata.
+                    if field == "eligible_countries":
+                        setattr(existing, field, value)
+                    elif field == "eligibility_status":
+                        if value != "unknown":
+                            setattr(existing, field, value)
+                    elif field == "listing_status":
+                        continue
+                    else:
+                        setattr(existing, field, value)
 
                 existing.last_seen_at = now
                 updated += 1

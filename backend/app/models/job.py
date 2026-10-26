@@ -53,6 +53,19 @@ class Job(Base):
         default="unknown",
         server_default=text("'unknown'"),
     )
+    # Evidence supporting a human-reviewed country eligibility decision.
+    eligibility_evidence_url: Mapped[str | None] = mapped_column(
+        String(2048), nullable=True
+    )
+    eligibility_evidence: Mapped[str | None] = mapped_column(
+        Text, nullable=True
+    )
+    eligibility_verified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    eligibility_verified_by: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )
     listing_status: Mapped[str] = mapped_column(
         String(30),
         nullable=False,
