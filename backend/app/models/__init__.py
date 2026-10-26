@@ -8,3 +8,4 @@ __all__ = [
     "ApplicationBatch",
     "ApplicationBatchItem",
 ]
+from app.models.cover_letter_draft import CoverLetterDraft
