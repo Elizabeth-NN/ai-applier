@@ -136,6 +136,7 @@ const columns = [
 export default function DashboardPage() {
   const { isLoaded, isSignedIn, getToken } = useAuth();
   const [activePage, setActivePage] = useState("Dashboard");
+  const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [jobPage, setJobPage] = useState(1);
@@ -1414,29 +1415,70 @@ export default function DashboardPage() {
         </main>
       </div>
 
+      {mobileMoreOpen && (
+        <div className="fixed inset-x-3 bottom-[calc(4.75rem+env(safe-area-inset-bottom))] z-40 rounded-2xl border border-slate-200 bg-white p-2 shadow-xl lg:hidden">
+          {[
+            { label: "Application Batches", icon: CheckCircle },
+            { label: "Cover Letter Drafts", icon: Files },
+            { label: "Insights", icon: ChartPieSlice },
+          ].map(({ label, icon: Icon }) => (
+            <button
+              key={label}
+              type="button"
+              onClick={() => {
+                setActivePage(label);
+                setMobileMoreOpen(false);
+              }}
+              className={`flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium ${
+                activePage === label
+                  ? "bg-violet-50 text-violet-700"
+                  : "text-slate-600 hover:bg-slate-50"
+              }`}
+            >
+              <Icon size={20} />
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+
       <nav
-        aria-label="Primary"
+        aria-label="Mobile dashboard navigation"
         className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-5 border-t border-slate-200 bg-white/95 pb-[env(safe-area-inset-bottom)] backdrop-blur lg:hidden"
       >
-        {navItems.map(({ label, icon: Icon, badge }) => {
-          const active = activePage === label;
+        {[
+          { label: "Home", page: "Dashboard", icon: SquaresFour },
+          { label: "Jobs", page: "Job Matches", icon: Lightning },
+          { label: "Applications", page: "Applications", icon: Briefcase },
+          { label: "Documents", page: "My Documents", icon: Files },
+          { label: "More", page: "More", icon: List },
+        ].map(({ label, page, icon: Icon }) => {
+          const active =
+            page === "More"
+              ? mobileMoreOpen ||
+                ["Application Batches", "Cover Letter Drafts", "Insights"].includes(activePage)
+              : activePage === page;
 
           return (
             <button
               key={label}
-              onClick={() => setActivePage(label)}
-              aria-current={active ? "page" : undefined}
-              className={`relative flex min-h-14 flex-col items-center justify-center gap-1 px-1 text-[10px] font-semibold ${
+              type="button"
+              onClick={() => {
+                if (page === "More") {
+                  setMobileMoreOpen((open) => !open);
+                } else {
+                  setActivePage(page);
+                  setMobileMoreOpen(false);
+                }
+              }}
+              aria-current={page !== "More" && active ? "page" : undefined}
+              aria-expanded={page === "More" ? mobileMoreOpen : undefined}
+              className={`flex min-w-0 min-h-14 flex-col items-center justify-center gap-1 px-0.5 text-[10px] font-semibold ${
                 active ? "text-violet-600" : "text-slate-500"
               }`}
             >
               <Icon size={22} weight={active ? "fill" : "duotone"} />
-              <span className="max-w-full truncate">
-                {label.replace("My ", "").replace("Job ", "")}
-              </span>
-              {badge && (
-                <span className="absolute right-[calc(50%-20px)] top-2 h-2 w-2 rounded-full bg-violet-500" />
-              )}
+              <span className="whitespace-nowrap">{label}</span>
             </button>
           );
         })}
