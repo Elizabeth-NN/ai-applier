@@ -1,0 +1,164 @@
+from collections.abc import Generator
+from io import BytesIO
+from pathlib import Path
+from zipfile import ZIP_DEFLATED, ZipFile
+
+import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+
+from app.core.auth import require_user
+from app.db.dependencies import get_db
+from app.db.session import Base
+from app.main import app
+from app.models.resume import Resume
+import app.api.resumes as resumes_api
+
+
+@pytest.fixture
+def resume_context(tmp_path, monkeypatch) -> Generator[dict, None, None]:
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    factory = sessionmaker(
+        bind=engine, autoflush=False, expire_on_commit=False
+    )
+    Base.metadata.create_all(bind=engine)
+    storage = tmp_path / "private_uploads"
+    monkeypatch.setattr(resumes_api, "STORAGE_DIR", storage)
+    current_user = {"id": "user_test_1"}
+
+    def override_get_db():
+        db = factory()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[require_user] = lambda: current_user["id"]
+
+    try:
+        with TestClient(app) as client:
+            yield {
+                "client": client,
+                "factory": factory,
+                "user": current_user,
+                "storage": storage,
+            }
+    finally:
+        app.dependency_overrides.clear()
+        Base.metadata.drop_all(bind=engine)
+        engine.dispose()
+
+
+def make_docx() -> bytes:
+    buffer = BytesIO()
+    with ZipFile(buffer, "w", ZIP_DEFLATED) as archive:
+        archive.writestr(
+            "[Content_Types].xml",
+            '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="application/xml"/></Types>',
+        )
+        archive.writestr("word/document.xml", "<document>Test resume</document>")
+    return buffer.getvalue()
+
+
+def upload(client, filename: str, content: bytes):
+    return client.post(
+        "/api/resumes",
+        files={"file": (filename, content, "application/octet-stream")},
+    )
+
+
+def test_upload_and_list_pdf(resume_context):
+    client = resume_context["client"]
+    response = upload(client, "resume.pdf", b"%PDF-1.7\nexample")
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["original_filename"] == "resume.pdf"
+    assert body["size_bytes"] == len(b"%PDF-1.7\nexample")
+    assert "storage_key" not in body
+
+    listing = client.get("/api/resumes")
+    assert listing.status_code == 200
+    assert len(listing.json()) == 1
+    assert listing.json()[0]["id"] == body["id"]
+
+
+def test_upload_valid_docx(resume_context):
+    response = upload(resume_context["client"], "resume.docx", make_docx())
+    assert response.status_code == 201, response.text
+
+
+@pytest.mark.parametrize(
+    ("filename", "content"),
+    [
+        ("resume.txt", b"plain text"),
+        ("resume.pdf", b"not a PDF"),
+        ("resume.docx", b"PK\\x03\\x04not a real Word document"),
+        ("resume.docx", b""),
+    ],
+)
+def test_reject_invalid_uploads(resume_context, filename, content):
+    response = upload(resume_context["client"], filename, content)
+    assert response.status_code == 400
+
+
+def test_reject_upload_larger_than_five_mib(resume_context):
+    content = b"%PDF-" + b"x" * (5 * 1024 * 1024)
+    response = upload(resume_context["client"], "large.pdf", content)
+    assert response.status_code == 413
+
+
+def test_download_returns_uploaded_content(resume_context):
+    content = b"%PDF-1.7\nexample"
+    created = upload(resume_context["client"], "my resume.pdf", content)
+    assert created.status_code == 201
+    resume_id = created.json()["id"]
+
+    response = resume_context["client"].get(
+        f"/api/resumes/{resume_id}/download"
+    )
+    assert response.status_code == 200
+    assert response.content == content
+    assert "attachment" in response.headers.get("content-disposition", "")
+    assert response.headers.get("x-content-type-options") == "nosniff"
+
+
+def test_user_cannot_list_or_download_another_users_resume(resume_context):
+    client = resume_context["client"]
+    created = upload(client, "private.pdf", b"%PDF-1.7\nprivate")
+    assert created.status_code == 201
+    resume_id = created.json()["id"]
+
+    resume_context["user"]["id"] = "different_user"
+
+    assert client.get("/api/resumes").json() == []
+    assert client.get(f"/api/resumes/{resume_id}/download").status_code == 404
+    assert client.delete(f"/api/resumes/{resume_id}").status_code == 404
+
+    with resume_context["factory"]() as db:
+        record = db.get(Resume, resume_id)
+        assert record is not None
+        assert record.user_id == "user_test_1"
+
+
+def test_delete_removes_record_and_file(resume_context):
+    client = resume_context["client"]
+    created = upload(client, "remove.pdf", b"%PDF-1.7\nremove")
+    assert created.status_code == 201
+    resume_id = created.json()["id"]
+
+    with resume_context["factory"]() as db:
+        record = db.get(Resume, resume_id)
+        stored_path = resume_context["storage"] / record.storage_key
+        assert stored_path.is_file()
+
+    response = client.delete(f"/api/resumes/{resume_id}")
+    assert response.status_code == 204
+    assert not stored_path.exists()
+    assert client.get("/api/resumes").json() == []

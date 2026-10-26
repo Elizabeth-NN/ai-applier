@@ -7,6 +7,7 @@ from app.api.cover_letter_drafts import router as cover_letter_drafts_router
 from app.api.application_batches import router as application_batches_router
 from app.api.applications import router as applications_router
 from app.api.jobs import router as jobs_router
+from app.api.resumes import router as resumes_router
 from app.db.session import engine
 from app.core.auth import CurrentAdmin, CurrentUser
 
@@ -28,6 +29,7 @@ app.include_router(jobs_router)
 app.include_router(applications_router)
 app.include_router(application_batches_router)
 app.include_router(cover_letter_drafts_router)
+app.include_router(resumes_router)
 
 
 @app.get("/")
