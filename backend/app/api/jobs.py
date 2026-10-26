@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
@@ -5,7 +7,12 @@ from sqlalchemy.orm import Session
 from app.core.auth import CurrentAdmin
 from app.db.dependencies import get_db
 from app.models.job import Job
-from app.schemas.job import JobCreate, JobRead, JobSearchResult
+from app.schemas.job import (
+    EligibilityVerificationRequest,
+    JobCreate,
+    JobRead,
+    JobSearchResult,
+)
 from app.services.job_ingestion import ingest_jobicy_jobs
 from app.services.jobicy_adapter import JobicyAPIError
 from app.services.job_status_sync import sync_jobicy_statuses
@@ -149,6 +156,57 @@ def sync_jobicy_listing_statuses(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Jobicy listing statuses could not be verified.",
         ) from exc
+
+
+@router.post("/{job_id}/eligibility", response_model=JobRead)
+def verify_job_eligibility(
+    job_id: int,
+    payload: EligibilityVerificationRequest,
+    admin_id: CurrentAdmin,
+    db: Session = Depends(get_db),
+):
+    """Record an admin's evidence-backed decision about Kenya eligibility."""
+    job = db.get(Job, job_id)
+
+    if job is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Job not found",
+        )
+
+    job.eligibility_status = payload.eligibility_status
+
+    if payload.eligibility_status == "unknown":
+        job.eligibility_evidence_url = None
+        job.eligibility_evidence = None
+        job.eligibility_verified_at = None
+        job.eligibility_verified_by = None
+    else:
+        job.eligibility_evidence_url = str(payload.evidence_url)
+        job.eligibility_evidence = payload.evidence.strip()
+        job.eligibility_verified_at = datetime.now(timezone.utc)
+        job.eligibility_verified_by = admin_id
+
+        countries = list(job.eligible_countries or [])
+        kenya_names = {"kenya"}
+
+        if payload.eligibility_status == "eligible":
+            if not any(
+                country.strip().casefold() in kenya_names
+                for country in countries
+            ):
+                countries.append("Kenya")
+            job.eligible_countries = countries
+        elif job.eligible_countries is not None:
+            job.eligible_countries = [
+                country
+                for country in countries
+                if country.strip().casefold() not in kenya_names
+            ]
+
+    db.commit()
+    db.refresh(job)
+    return job
 
 
 @router.get("/{job_id}", response_model=JobRead)

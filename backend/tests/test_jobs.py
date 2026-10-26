@@ -642,3 +642,157 @@ def test_job_search_treats_null_remote_type_as_unknown(job_context):
     assert response.status_code == 200
     assert response.json()["total"] == 1
     assert response.json()["items"][0]["id"] == job_id
+
+
+def test_admin_can_verify_job_eligibility_with_evidence(job_context):
+    created = job_context.post("/api/jobs", json=valid_job())
+    assert created.status_code == 201
+    job_id = created.json()["id"]
+
+    response = job_context.post(
+        f"/api/jobs/{job_id}/eligibility",
+        json={
+            "eligibility_status": "eligible",
+            "evidence_url": "https://example.com/careers",
+            "evidence": "Employer confirms applications from Kenya are accepted.",
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["eligibility_status"] == "eligible"
+    assert data["eligibility_evidence_url"] == (
+        "https://example.com/careers"
+    )
+    assert data["eligibility_evidence"] == (
+        "Employer confirms applications from Kenya are accepted."
+    )
+    assert data["eligibility_verified_at"]
+    assert data["eligibility_verified_by"] == "user_admin"
+    assert "Kenya" in data["eligible_countries"]
+
+
+def test_admin_can_mark_job_ineligible_with_evidence(job_context):
+    created = job_context.post("/api/jobs", json=valid_job())
+    job_id = created.json()["id"]
+
+    response = job_context.post(
+        f"/api/jobs/{job_id}/eligibility",
+        json={
+            "eligibility_status": "ineligible",
+            "evidence_url": "https://example.com/requirements",
+            "evidence": "Employer explicitly excludes applicants based in Kenya.",
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["eligibility_status"] == "ineligible"
+    assert data["eligibility_evidence_url"] == (
+        "https://example.com/requirements"
+    )
+    assert data["eligibility_verified_by"] == "user_admin"
+    assert data["eligibility_verified_at"]
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"eligibility_status": "eligible"},
+        {
+            "eligibility_status": "eligible",
+            "evidence_url": "https://example.com/careers",
+        },
+        {
+            "eligibility_status": "ineligible",
+            "evidence_url": "https://example.com/requirements",
+            "evidence": "   ",
+        },
+        {
+            "eligibility_status": "eligible",
+            "evidence_url": "javascript:alert(1)",
+            "evidence": "Evidence text",
+        },
+        {
+            "eligibility_status": "maybe",
+            "evidence_url": "https://example.com/careers",
+            "evidence": "Evidence text",
+        },
+    ],
+)
+def test_invalid_eligibility_verification_is_rejected(job_context, payload):
+    created = job_context.post("/api/jobs", json=valid_job())
+    job_id = created.json()["id"]
+
+    response = job_context.post(
+        f"/api/jobs/{job_id}/eligibility",
+        json=payload,
+    )
+
+    assert response.status_code == 422
+
+
+def test_verification_of_missing_job_returns_404(job_context):
+    response = job_context.post(
+        "/api/jobs/999999/eligibility",
+        json={
+            "eligibility_status": "eligible",
+            "evidence_url": "https://example.com/careers",
+            "evidence": "Employer confirms applicants from Kenya are accepted.",
+        },
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Job not found"
+
+
+def test_eligibility_verification_requires_admin(job_context):
+    created = job_context.post("/api/jobs", json=valid_job())
+    job_id = created.json()["id"]
+
+    def reject_non_admin():
+        raise HTTPException(
+            status_code=403,
+            detail="Admin access required",
+        )
+
+    app.dependency_overrides[require_admin] = reject_non_admin
+
+    response = job_context.post(
+        f"/api/jobs/{job_id}/eligibility",
+        json={
+            "eligibility_status": "eligible",
+            "evidence_url": "https://example.com/careers",
+            "evidence": "Employer confirms applicants from Kenya are accepted.",
+        },
+    )
+
+    assert response.status_code == 403
+
+
+def test_unknown_eligibility_clears_current_verification(job_context):
+    created = job_context.post("/api/jobs", json=valid_job())
+    job_id = created.json()["id"]
+
+    verified = job_context.post(
+        f"/api/jobs/{job_id}/eligibility",
+        json={
+            "eligibility_status": "eligible",
+            "evidence_url": "https://example.com/careers",
+            "evidence": "Employer confirms applicants from Kenya are accepted.",
+        },
+    )
+    assert verified.status_code == 200
+
+    reset = job_context.post(
+        f"/api/jobs/{job_id}/eligibility",
+        json={"eligibility_status": "unknown"},
+    )
+
+    assert reset.status_code == 200
+    data = reset.json()
+    assert data["eligibility_status"] == "unknown"
+    assert data["eligibility_evidence_url"] is None
+    assert data["eligibility_evidence"] is None
+    assert data["eligibility_verified_at"] is None
+    assert data["eligibility_verified_by"] is None

@@ -1,6 +1,7 @@
 from datetime import datetime
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, model_validator
 
 
 class JobCreate(BaseModel):
@@ -43,3 +44,24 @@ class JobSearchResult(BaseModel):
     total: int
     skip: int
     limit: int
+
+
+class EligibilityVerificationRequest(BaseModel):
+    """Evidence-backed verification of a job's eligibility in Kenya."""
+
+    eligibility_status: Literal["eligible", "ineligible", "unknown"]
+    evidence_url: AnyHttpUrl | None = None
+    evidence: str | None = Field(default=None, max_length=10000)
+
+    @model_validator(mode="after")
+    def validate_evidence(self):
+        if self.eligibility_status in {"eligible", "ineligible"}:
+            if self.evidence_url is None:
+                raise ValueError(
+                    "An evidence URL is required for a verified decision."
+                )
+            if not self.evidence or not self.evidence.strip():
+                raise ValueError(
+                    "Supporting evidence is required for a verified decision."
+                )
+        return self
