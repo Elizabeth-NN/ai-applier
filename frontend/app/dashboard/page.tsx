@@ -43,6 +43,10 @@ type ApiJob = {
   remote_type: string | null;
   eligible_countries: string[] | null;
   eligibility_status: string;
+  eligibility_evidence_url: string | null;
+  eligibility_evidence: string | null;
+  eligibility_verified_at: string | null;
+  eligibility_verified_by: string | null;
   listing_status: string;
 };
 
@@ -120,6 +124,224 @@ async function apiRequest<T>(
   }
 
   return data as T;
+}
+
+type EligibilityStatus = "eligible" | "ineligible" | "unknown";
+
+function EligibilityVerificationPanel({
+  job,
+  isAdmin,
+  onUpdated,
+}: {
+  job: ApiJob;
+  isAdmin: boolean;
+  onUpdated: (updated: ApiJob) => void;
+}) {
+  const { getToken } = useAuth();
+
+  const [status, setStatus] = useState<EligibilityStatus>(
+    job.eligibility_status === "eligible" ||
+      job.eligibility_status === "ineligible"
+      ? job.eligibility_status
+      : "unknown",
+  );
+  const [evidenceUrl, setEvidenceUrl] = useState(
+    job.eligibility_evidence_url ?? "",
+  );
+  const [evidence, setEvidence] = useState(
+    job.eligibility_evidence ?? "",
+  );
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState("");
+  const [savedMessage, setSavedMessage] = useState("");
+  const [showForm, setShowForm] = useState(false);
+
+  const statusLabel =
+    job.eligibility_status === "eligible"
+      ? "Eligible for Kenya"
+      : job.eligibility_status === "ineligible"
+        ? "Not eligible for Kenya"
+        : "Kenya eligibility unverified";
+
+  async function submitVerification(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (saving) return;
+
+    setSaving(true);
+    setFormError("");
+    setSavedMessage("");
+
+    try {
+      const token = await getToken();
+      if (!token) throw new Error("Please sign in again.");
+
+      const updated = await apiRequest<ApiJob>(
+        `/api/jobs/${job.id}/eligibility`,
+        token,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            eligibility_status: status,
+            evidence_url: status === "unknown" ? null : evidenceUrl.trim(),
+            evidence: status === "unknown" ? null : evidence.trim(),
+          }),
+        },
+      );
+
+      onUpdated(updated);
+      setStatus(
+        updated.eligibility_status === "eligible" ||
+          updated.eligibility_status === "ineligible"
+          ? updated.eligibility_status
+          : "unknown",
+      );
+      setEvidenceUrl(updated.eligibility_evidence_url ?? "");
+      setEvidence(updated.eligibility_evidence ?? "");
+      setSavedMessage("Eligibility verification saved.");
+    } catch (err) {
+      setFormError(
+        err instanceof Error
+          ? err.message
+          : "Could not save eligibility verification.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="mt-4 border-t border-slate-100 pt-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs font-semibold text-slate-500">
+          Kenya eligibility
+        </span>
+        <span
+          className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+            job.eligibility_status === "eligible"
+              ? "bg-emerald-50 text-emerald-700"
+              : job.eligibility_status === "ineligible"
+                ? "bg-red-50 text-red-700"
+                : "bg-amber-50 text-amber-700"
+          }`}
+        >
+          {statusLabel}
+        </span>
+      </div>
+
+      {job.eligibility_evidence && (
+        <div className="mt-3 space-y-1 text-sm text-slate-600">
+          <p>{job.eligibility_evidence}</p>
+          {job.eligibility_evidence_url && (
+            <a
+              href={job.eligibility_evidence_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-block break-all font-medium text-violet-600 underline hover:text-violet-800"
+            >
+              View verification source
+            </a>
+          )}
+          {job.eligibility_verified_at && (
+            <p className="text-xs text-slate-400">
+              Verified {new Date(job.eligibility_verified_at).toLocaleString()}
+            </p>
+          )}
+        </div>
+      )}
+
+      {isAdmin && (
+        <div className="mt-4">
+          <button
+            type="button"
+            onClick={() => {
+              setShowForm((visible) => !visible);
+              setFormError("");
+              setSavedMessage("");
+            }}
+            aria-expanded={showForm}
+            className="inline-flex items-center justify-center rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-violet-700"
+          >
+            {showForm ? "Close verification" : "Verify Kenya eligibility"}
+          </button>
+
+          {showForm && (
+            <form onSubmit={submitVerification} className="mt-4 space-y-3">
+          <h4 className="text-sm font-bold text-slate-800">
+            Admin verification
+          </h4>
+
+          <label className="block text-sm font-medium text-slate-700">
+            Decision
+            <select
+              value={status}
+              onChange={(event) =>
+                setStatus(event.target.value as EligibilityStatus)
+              }
+              disabled={saving}
+              className="mt-1.5 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm"
+            >
+              <option value="unknown">Unknown / clear verification</option>
+              <option value="eligible">Eligible to work from Kenya</option>
+              <option value="ineligible">Not eligible from Kenya</option>
+            </select>
+          </label>
+
+          {status !== "unknown" && (
+            <>
+              <label className="block text-sm font-medium text-slate-700">
+                Evidence source URL *
+                <input
+                  type="url"
+                  required
+                  maxLength={2048}
+                  value={evidenceUrl}
+                  onChange={(event) => setEvidenceUrl(event.target.value)}
+                  disabled={saving}
+                  placeholder="https://company.com/careers/eligibility"
+                  className="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-normal outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
+                />
+              </label>
+
+              <label className="block text-sm font-medium text-slate-700">
+                Supporting evidence *
+                <textarea
+                  required
+                  maxLength={10000}
+                  rows={3}
+                  value={evidence}
+                  onChange={(event) => setEvidence(event.target.value)}
+                  disabled={saving}
+                  placeholder="Explain what the source confirms about applicants based in Kenya."
+                  className="mt-1.5 w-full resize-y rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-normal outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
+                />
+              </label>
+            </>
+          )}
+
+          {formError && (
+            <p role="alert" className="text-sm text-red-600">
+              {formError}
+            </p>
+          )}
+          {savedMessage && (
+            <p role="status" className="text-sm text-emerald-700">
+              {savedMessage}
+            </p>
+          )}
+
+          <button
+            type="submit"
+            disabled={saving}
+            className="rounded-lg bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {saving ? "Saving verification..." : "Save verification"}
+          </button>
+          </form>
+        )}
+      </div>
+    )}
+    </div>
+  );
 }
 
 const navItems = [
@@ -1224,6 +1446,25 @@ export default function DashboardPage() {
                                     : "Save job"}
                             </button>
                           </div>
+
+                          <EligibilityVerificationPanel
+                            job={
+                              apiJobs.find((item) => item.id === job.id)!
+                            }
+                            isAdmin={isAdmin}
+                            onUpdated={(updated) => {
+                              setApiJobs((current) =>
+                                current.map((item) =>
+                                  item.id === updated.id ? updated : item,
+                                ),
+                              );
+                              setTrackedApiJobs((current) =>
+                                current.map((item) =>
+                                  item.id === updated.id ? updated : item,
+                                ),
+                              );
+                            }}
+                          />
                         </article>
                       ))}
                     </div>

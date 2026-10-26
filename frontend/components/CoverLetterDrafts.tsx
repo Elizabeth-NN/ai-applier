@@ -135,13 +135,12 @@ export default function CoverLetterDrafts({
     setSelectedDraftId(initialDraft?.id ?? null);
     setContent(initialDraft?.content ?? "");
     setSavedContent(initialDraft?.content ?? null);
-  }, [getToken, selectedApplicationId]);
+  }, [getToken, selectedApplicationId, initialDraftId]);
 
   useEffect(() => {
     if (!isLoaded) return;
 
     if (!isSignedIn) {
-      setLoading(false);
       return;
     }
 
@@ -296,7 +295,7 @@ export default function CoverLetterDrafts({
     }
   }
 
-  if (!isLoaded || loading) {
+  if (!isLoaded || (isSignedIn && loading)) {
     return (
       <p className="text-sm text-slate-500">
         Loading cover letter drafts...
