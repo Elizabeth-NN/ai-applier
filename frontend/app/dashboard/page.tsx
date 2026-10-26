@@ -31,6 +31,7 @@ import Navbar from "@/components/Navbar";
 import BackendAuthCheck from "@/components/BackendAuthCheck";
 import ApplicationBatches from "@/components/ApplicationBatches";
 import CoverLetterDrafts from "@/components/CoverLetterDrafts";
+import MyDocuments from "@/components/MyDocuments";
 
 type ApiJob = {
   id: number;
@@ -136,6 +137,7 @@ const columns = [
 export default function DashboardPage() {
   const { isLoaded, isSignedIn, getToken } = useAuth();
   const [activePage, setActivePage] = useState("Dashboard");
+  const [draftToOpenId, setDraftToOpenId] = useState<number | null>(null);
   const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -945,7 +947,8 @@ export default function DashboardPage() {
               activePage !== "Job Matches" &&
               activePage !== "Applications" &&
               activePage !== "Application Batches" &&
-              activePage !== "Cover Letter Drafts" && (
+              activePage !== "Cover Letter Drafts" &&
+              activePage !== "My Documents" && (
                 <section className="rounded-2xl border border-slate-200 bg-white p-6 sm:p-8">
                   <Sparkle size={28} className="mb-4 text-violet-600" />
                   <h2 className="text-lg font-bold">{activePage}</h2>
@@ -964,7 +967,17 @@ export default function DashboardPage() {
               )}
 
             {activePage === "Application Batches" && <ApplicationBatches />}
-            {activePage === "Cover Letter Drafts" && <CoverLetterDrafts />}
+            {activePage === "Cover Letter Drafts" && (
+              <CoverLetterDrafts initialDraftId={draftToOpenId} />
+            )}
+            {activePage === "My Documents" && (
+              <MyDocuments
+                onOpenEditor={(draftId) => {
+                  setDraftToOpenId(draftId ?? null);
+                  setActivePage("Cover Letter Drafts");
+                }}
+              />
+            )}
 
             {activePage === "Dashboard" && (
               <>

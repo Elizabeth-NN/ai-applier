@@ -61,7 +61,13 @@ async function apiRequest<T>(
   return data as T;
 }
 
-export default function CoverLetterDrafts() {
+type CoverLetterDraftsProps = {
+  initialDraftId?: number | null;
+};
+
+export default function CoverLetterDrafts({
+  initialDraftId = null,
+}: CoverLetterDraftsProps) {
   const { isLoaded, isSignedIn, getToken } = useAuth();
 
   const [applications, setApplications] = useState<ApiApplication[]>([]);
@@ -72,6 +78,7 @@ export default function CoverLetterDrafts() {
   const [content, setContent] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [savedContent, setSavedContent] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -99,27 +106,35 @@ export default function CoverLetterDrafts() {
     setJobs(loadedJobs);
     setDrafts(loadedDrafts);
 
-    // Keep the current application if it still exists; otherwise use the first.
+    // Prefer the exact draft selected from My Documents.
+    const requestedDraft = initialDraftId === null
+      ? undefined
+      : loadedDrafts.find((draft) => draft.id === initialDraftId);
+
+    // Otherwise keep the current application, or fall back to the first.
     const firstApplication = loadedApplications[0];
     const currentApplicationId = selectedApplicationId;
     const applicationStillExists = loadedApplications.some(
       (item) => String(item.id) === currentApplicationId,
     );
-    const nextApplicationId = applicationStillExists
-      ? currentApplicationId
-      : firstApplication
-        ? String(firstApplication.id)
-        : "";
+    const nextApplicationId = requestedDraft
+      ? String(requestedDraft.application_id)
+      : applicationStillExists
+        ? currentApplicationId
+        : firstApplication
+          ? String(firstApplication.id)
+          : "";
 
     setSelectedApplicationId(nextApplicationId);
 
-    // Load the most recently updated draft for the selected application.
-    const initialDraft = loadedDrafts.find(
+    // Load the requested draft, or the latest draft for this application.
+    const initialDraft = requestedDraft ?? loadedDrafts.find(
       (draft) => String(draft.application_id) === nextApplicationId,
     );
 
     setSelectedDraftId(initialDraft?.id ?? null);
     setContent(initialDraft?.content ?? "");
+    setSavedContent(initialDraft?.content ?? null);
   }, [getToken, selectedApplicationId]);
 
   useEffect(() => {
@@ -183,6 +198,7 @@ export default function CoverLetterDrafts() {
 
     setSelectedDraftId(existingDraft?.id ?? null);
     setContent(existingDraft?.content ?? "");
+    setSavedContent(existingDraft?.content ?? null);
     setError("");
     setNotice("");
   }
@@ -191,12 +207,14 @@ export default function CoverLetterDrafts() {
     if (!draftId) {
       setSelectedDraftId(null);
       setContent("");
+      setSavedContent(null);
     } else {
       const draft = drafts.find((item) => item.id === Number(draftId));
 
       if (draft) {
         setSelectedDraftId(draft.id);
         setContent(draft.content);
+        setSavedContent(draft.content);
       }
     }
 
@@ -223,6 +241,7 @@ export default function CoverLetterDrafts() {
     setSaving(true);
     setError("");
     setNotice("");
+    setSavedContent(null);
 
     try {
       const token = await getToken();
@@ -248,6 +267,7 @@ export default function CoverLetterDrafts() {
             draft.id === savedDraft.id ? savedDraft : draft,
           ),
         );
+        setSavedContent(savedDraft.content);
         setNotice("Cover letter draft saved.");
       } else {
         savedDraft = await apiRequest<CoverLetterDraft>(
@@ -264,6 +284,7 @@ export default function CoverLetterDrafts() {
 
         setDrafts((current) => [savedDraft, ...current]);
         setSelectedDraftId(savedDraft.id);
+        setSavedContent(savedDraft.content);
         setNotice("Cover letter draft created and saved.");
       }
     } catch (err) {
@@ -447,7 +468,10 @@ export default function CoverLetterDrafts() {
               Cover letter content
               <textarea
                 value={content}
-                onChange={(event) => setContent(event.target.value)}
+                onChange={(event) => {
+                  setContent(event.target.value);
+                  setNotice("");
+                }}
                 maxLength={20000}
                 rows={18}
                 placeholder={`Dear Hiring Manager,
@@ -473,9 +497,11 @@ Kind regards,`}
               >
                 {saving
                   ? "Saving..."
-                  : selectedDraft
-                    ? "Save changes"
-                    : "Create draft"}
+                  : savedContent === content && selectedDraft
+                    ? "Saved"
+                    : selectedDraft
+                      ? "Save changes"
+                      : "Create draft"}
               </button>
             </div>
           </section>
