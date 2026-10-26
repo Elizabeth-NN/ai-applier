@@ -9,3 +9,5 @@ __all__ = [
     "ApplicationBatchItem",
 ]
 from app.models.cover_letter_draft import CoverLetterDraft
+
+from app.models.resume import Resume

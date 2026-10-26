@@ -23,3 +23,6 @@ htmlcov/
 
 # Local database backups
 backend/backups/
+
+# Private user-uploaded documents
+backend/private_uploads/
