@@ -32,6 +32,7 @@ import BackendAuthCheck from "@/components/BackendAuthCheck";
 import ApplicationBatches from "@/components/ApplicationBatches";
 import CoverLetterDrafts from "@/components/CoverLetterDrafts";
 import MyDocuments from "@/components/MyDocuments";
+import Insights from "@/components/Insights";
 
 type ApiJob = {
   id: number;
@@ -948,7 +949,8 @@ export default function DashboardPage() {
               activePage !== "Applications" &&
               activePage !== "Application Batches" &&
               activePage !== "Cover Letter Drafts" &&
-              activePage !== "My Documents" && (
+              activePage !== "My Documents" &&
+              activePage !== "Insights" && (
                 <section className="rounded-2xl border border-slate-200 bg-white p-6 sm:p-8">
                   <Sparkle size={28} className="mb-4 text-violet-600" />
                   <h2 className="text-lg font-bold">{activePage}</h2>
@@ -978,6 +980,8 @@ export default function DashboardPage() {
                 }}
               />
             )}
+
+            {activePage === "Insights" && <Insights />}
 
             {activePage === "Dashboard" && (
               <>
