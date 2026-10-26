@@ -30,6 +30,7 @@ import {
 import Navbar from "@/components/Navbar";
 import BackendAuthCheck from "@/components/BackendAuthCheck";
 import ApplicationBatches from "@/components/ApplicationBatches";
+import CoverLetterDrafts from "@/components/CoverLetterDrafts";
 
 type ApiJob = {
   id: number;
@@ -121,6 +122,7 @@ const navItems = [
   { label: "My Documents", icon: Files },
   { label: "Applications", icon: Briefcase },
   { label: "Application Batches", icon: CheckCircle },
+  { label: "Cover Letter Drafts", icon: Files },
   { label: "Insights", icon: ChartPieSlice },
 ];
 
@@ -941,7 +943,8 @@ export default function DashboardPage() {
             {activePage !== "Dashboard" &&
               activePage !== "Job Matches" &&
               activePage !== "Applications" &&
-              activePage !== "Application Batches" && (
+              activePage !== "Application Batches" &&
+              activePage !== "Cover Letter Drafts" && (
                 <section className="rounded-2xl border border-slate-200 bg-white p-6 sm:p-8">
                   <Sparkle size={28} className="mb-4 text-violet-600" />
                   <h2 className="text-lg font-bold">{activePage}</h2>
@@ -960,6 +963,7 @@ export default function DashboardPage() {
               )}
 
             {activePage === "Application Batches" && <ApplicationBatches />}
+            {activePage === "Cover Letter Drafts" && <CoverLetterDrafts />}
 
             {activePage === "Dashboard" && (
               <>
