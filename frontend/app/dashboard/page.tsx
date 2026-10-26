@@ -40,6 +40,10 @@ type ApiJob = {
   title: string;
   location: string | null;
   created_at: string;
+  remote_type: string | null;
+  eligible_countries: string[] | null;
+  eligibility_status: string;
+  listing_status: string;
 };
 
 type ApiApplication = {
@@ -142,6 +146,9 @@ export default function DashboardPage() {
   const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [remoteType, setRemoteType] = useState("");
+  const [eligibilityStatus, setEligibilityStatus] = useState("");
+  const [listingStatus, setListingStatus] = useState("");
   const [jobPage, setJobPage] = useState(1);
   const [jobTotal, setJobTotal] = useState(0);
   const [jobsLoading, setJobsLoading] = useState(false);
@@ -252,6 +259,18 @@ export default function DashboardPage() {
           limit: String(pageSize),
         });
 
+        if (remoteType) {
+          params.set("remote_type", remoteType);
+        }
+
+        if (eligibilityStatus) {
+          params.set("eligibility_status", eligibilityStatus);
+        }
+
+        if (listingStatus) {
+          params.set("listing_status", listingStatus);
+        }
+
         const result = await apiRequest<{
           items: ApiJob[];
           total: number;
@@ -286,6 +305,9 @@ export default function DashboardPage() {
     debouncedSearch,
     jobPage,
     jobsRefreshKey,
+    remoteType,
+    eligibilityStatus,
+    listingStatus,
   ]);
 
   const jobs = useMemo<Job[]>(
@@ -1039,6 +1061,81 @@ export default function DashboardPage() {
                       >
                         All matches <CaretRight size={16} />
                       </button>
+                    </div>
+                    <div className="grid grid-cols-1 gap-3 rounded-2xl border border-slate-200 bg-white p-4 sm:grid-cols-3">
+                      <label className="space-y-1.5">
+                        <span className="text-xs font-semibold text-slate-600">
+                          Work arrangement
+                        </span>
+                        <select
+                          value={remoteType}
+                          onChange={(event) => {
+                            setRemoteType(event.target.value);
+                            setJobPage(1);
+                          }}
+                          className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm"
+                        >
+                          <option value="">All arrangements</option>
+                          <option value="remote">Remote</option>
+                          <option value="hybrid">Hybrid</option>
+                          <option value="onsite">On-site</option>
+                          <option value="unknown">Unknown</option>
+                        </select>
+                      </label>
+
+                      <label className="space-y-1.5">
+                        <span className="text-xs font-semibold text-slate-600">
+                          Kenya eligibility
+                        </span>
+                        <select
+                          value={eligibilityStatus}
+                          onChange={(event) => {
+                            setEligibilityStatus(event.target.value);
+                            setJobPage(1);
+                          }}
+                          className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm"
+                        >
+                          <option value="">All eligibility statuses</option>
+                          <option value="eligible">Eligible</option>
+                          <option value="ineligible">Ineligible</option>
+                          <option value="unknown">Unverified</option>
+                        </select>
+                      </label>
+
+                      <label className="space-y-1.5">
+                        <span className="text-xs font-semibold text-slate-600">
+                          Listing status
+                        </span>
+                        <select
+                          value={listingStatus}
+                          onChange={(event) => {
+                            setListingStatus(event.target.value);
+                            setJobPage(1);
+                          }}
+                          className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm"
+                        >
+                          <option value="">All listing statuses</option>
+                          <option value="active">Active</option>
+                          <option value="closed">Closed</option>
+                          <option value="unknown">Unverified</option>
+                        </select>
+                      </label>
+
+                      {(remoteType || eligibilityStatus || listingStatus || search) && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setRemoteType("");
+                            setEligibilityStatus("");
+                            setListingStatus("");
+                            setSearch("");
+                            setJobPage(1);
+                          }}
+                          className="text-left text-sm font-semibold text-violet-600 hover:text-violet-800 sm:col-span-3"
+                        >
+                          Clear all filters
+                        </button>
+                      )}
                     </div>
 
                     <div className="space-y-3">
