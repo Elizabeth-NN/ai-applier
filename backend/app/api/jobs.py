@@ -50,28 +50,60 @@ def list_jobs(
 
 
 
-
 @router.get("/search", response_model=JobSearchResult)
 def search_jobs(
     q: str = Query(default="", max_length=255),
+    remote_type: str | None = Query(
+        default=None,
+        pattern="^(remote|hybrid|onsite|unknown)$",
+    ),
+    eligibility_status: str | None = Query(
+        default=None,
+        pattern="^(eligible|ineligible|unknown)$",
+    ),
+    listing_status: str | None = Query(
+        default=None,
+        pattern="^(active|closed|unknown)$",
+    ),
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=20, ge=1, le=100),
     db: Session = Depends(get_db),
 ):
-    """Search all stored jobs and return one page plus the total match count."""
+    """Search stored jobs using text and discovery metadata."""
     statement = select(Job)
     count_statement = select(func.count()).select_from(Job)
+    filters = []
 
     term = q.strip()
     if term:
         pattern = f"%{term}%"
-        search_filter = or_(
-            Job.title.ilike(pattern),
-            Job.company.ilike(pattern),
-            Job.location.ilike(pattern),
+        filters.append(
+            or_(
+                Job.title.ilike(pattern),
+                Job.company.ilike(pattern),
+                Job.location.ilike(pattern),
+            )
         )
-        statement = statement.where(search_filter)
-        count_statement = count_statement.where(search_filter)
+
+    if remote_type == "unknown":
+        filters.append(
+            or_(
+                Job.remote_type.is_(None),
+                Job.remote_type == "unknown",
+            )
+        )
+    elif remote_type is not None:
+        filters.append(Job.remote_type == remote_type)
+
+    if eligibility_status is not None:
+        filters.append(Job.eligibility_status == eligibility_status)
+
+    if listing_status is not None:
+        filters.append(Job.listing_status == listing_status)
+
+    if filters:
+        statement = statement.where(*filters)
+        count_statement = count_statement.where(*filters)
 
     total = db.scalar(count_statement) or 0
     items = db.scalars(
@@ -87,6 +119,7 @@ def search_jobs(
         "skip": skip,
         "limit": limit,
     }
+
 
 @router.post("/ingest/jobicy")
 def refresh_jobicy_jobs(

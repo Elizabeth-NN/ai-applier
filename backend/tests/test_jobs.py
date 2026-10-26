@@ -9,6 +9,7 @@ from app.core.auth import require_admin
 from app.db.dependencies import get_db
 from app.db.session import Base
 from app.main import app
+from app.models.job import Job
 
 
 @pytest.fixture
@@ -37,6 +38,7 @@ def job_context():
 
     try:
         with TestClient(app) as client:
+            client.testing_session = testing_session
             yield client
     finally:
         app.dependency_overrides.clear()
@@ -480,3 +482,163 @@ def test_job_search_rejects_invalid_pagination(job_context):
     assert job_context.get(
         "/api/jobs/search", params={"limit": 101}
     ).status_code == 422
+
+
+def create_job_with_metadata(
+    job_context,
+    title,
+    remote_type,
+    eligibility_status,
+    listing_status,
+):
+    payload = valid_job()
+    payload["title"] = title
+
+    response = job_context.post("/api/jobs", json=payload)
+    assert response.status_code == 201
+
+    with job_context.testing_session() as db:
+        job = db.get(Job, response.json()["id"])
+        assert job is not None
+
+        job.remote_type = remote_type
+        job.eligibility_status = eligibility_status
+        job.listing_status = listing_status
+        db.commit()
+
+    return response.json()["id"]
+
+
+def test_job_search_filters_remote_type(job_context):
+    create_job_with_metadata(
+        job_context, "Remote Python Developer",
+        "remote", "eligible", "active",
+    )
+    create_job_with_metadata(
+        job_context, "Hybrid React Developer",
+        "hybrid", "eligible", "active",
+    )
+    create_job_with_metadata(
+        job_context, "Onsite Java Developer",
+        "onsite", "ineligible", "closed",
+    )
+
+    response = job_context.get(
+        "/api/jobs/search", params={"remote_type": "remote"}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["total"] == 1
+    assert response.json()["items"][0]["title"] == (
+        "Remote Python Developer"
+    )
+
+
+def test_job_search_filters_eligibility_status(job_context):
+    create_job_with_metadata(
+        job_context, "Eligible Developer",
+        "remote", "eligible", "active",
+    )
+    create_job_with_metadata(
+        job_context, "Ineligible Developer",
+        "remote", "ineligible", "active",
+    )
+    create_job_with_metadata(
+        job_context, "Unknown Eligibility Developer",
+        "remote", "unknown", "active",
+    )
+
+    response = job_context.get(
+        "/api/jobs/search",
+        params={"eligibility_status": "ineligible"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["total"] == 1
+    assert response.json()["items"][0]["title"] == (
+        "Ineligible Developer"
+    )
+
+
+def test_job_search_filters_listing_status(job_context):
+    create_job_with_metadata(
+        job_context, "Active Developer",
+        "remote", "eligible", "active",
+    )
+    create_job_with_metadata(
+        job_context, "Closed Developer",
+        "remote", "eligible", "closed",
+    )
+    create_job_with_metadata(
+        job_context, "Unknown Listing Developer",
+        "remote", "eligible", "unknown",
+    )
+
+    response = job_context.get(
+        "/api/jobs/search", params={"listing_status": "closed"}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["total"] == 1
+    assert response.json()["items"][0]["title"] == (
+        "Closed Developer"
+    )
+
+
+def test_job_search_combines_text_and_metadata_filters(job_context):
+    create_job_with_metadata(
+        job_context, "Python Backend Developer",
+        "remote", "eligible", "active",
+    )
+    create_job_with_metadata(
+        job_context, "Python Frontend Developer",
+        "hybrid", "eligible", "active",
+    )
+
+    response = job_context.get(
+        "/api/jobs/search",
+        params={"q": "Python", "remote_type": "remote"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["total"] == 1
+    assert response.json()["items"][0]["title"] == (
+        "Python Backend Developer"
+    )
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"remote_type": "any"},
+        {"eligibility_status": "maybe"},
+        {"listing_status": "pending"},
+    ],
+)
+def test_job_search_rejects_invalid_discovery_filters(
+    job_context, params
+):
+    response = job_context.get("/api/jobs/search", params=params)
+
+    assert response.status_code == 422
+
+
+def test_job_search_treats_null_remote_type_as_unknown(job_context):
+    job_id = create_job_with_metadata(
+        job_context, "Unclassified Remote Developer",
+        "remote", "unknown", "unknown",
+    )
+
+    with job_context.testing_session() as db:
+        job = db.get(Job, job_id)
+        assert job is not None
+        job.remote_type = None
+        db.commit()
+
+    response = job_context.get(
+        "/api/jobs/search", params={"remote_type": "unknown"}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["total"] == 1
+    assert response.json()["items"][0]["id"] == job_id
