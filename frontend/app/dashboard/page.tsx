@@ -377,6 +377,7 @@ export default function DashboardPage() {
   const [remoteType, setRemoteType] = useState("");
   const [eligibilityStatus, setEligibilityStatus] = useState("");
   const [listingStatus, setListingStatus] = useState("");
+  const [sortBy, setSortBy] = useState<"newest" | "relevance">("newest");
   const [jobPage, setJobPage] = useState(1);
   const [jobTotal, setJobTotal] = useState(0);
   const [jobsLoading, setJobsLoading] = useState(false);
@@ -485,6 +486,7 @@ export default function DashboardPage() {
           q: debouncedSearch,
           skip: String((jobPage - 1) * pageSize),
           limit: String(pageSize),
+          sort_by: sortBy,
         });
 
         if (remoteType) {
@@ -536,6 +538,7 @@ export default function DashboardPage() {
     remoteType,
     eligibilityStatus,
     listingStatus,
+    sortBy,
   ]);
 
   const jobs = useMemo<Job[]>(
@@ -1293,7 +1296,7 @@ export default function DashboardPage() {
                         All matches <CaretRight size={16} />
                       </button>
                     </div>
-                    <div className="grid grid-cols-1 gap-3 rounded-2xl border border-slate-200 bg-white p-4 sm:grid-cols-3">
+                    <div className="grid grid-cols-1 gap-3 rounded-2xl border border-slate-200 bg-white p-4 sm:grid-cols-2 xl:grid-cols-4">
                       <label className="space-y-1.5">
                         <span className="text-xs font-semibold text-slate-600">
                           Work arrangement
@@ -1352,13 +1355,31 @@ export default function DashboardPage() {
                         </select>
                       </label>
 
-                      {(remoteType || eligibilityStatus || listingStatus || search) && (
+                      <label className="space-y-1.5">
+                        <span className="text-xs font-semibold text-slate-600">
+                          Sort jobs by
+                        </span>
+                        <select
+                          value={sortBy}
+                          onChange={(event) => {
+                            setSortBy(event.target.value as "newest" | "relevance");
+                            setJobPage(1);
+                          }}
+                          className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm"
+                        >
+                          <option value="newest">Newest first</option>
+                          <option value="relevance">Most relevant</option>
+                        </select>
+                      </label>
+
+                      {(remoteType || eligibilityStatus || listingStatus || search || sortBy !== "newest") && (
                         <button
                           type="button"
                           onClick={() => {
                             setRemoteType("");
                             setEligibilityStatus("");
                             setListingStatus("");
+                            setSortBy("newest");
                             setSearch("");
                             setJobPage(1);
                           }}

@@ -505,6 +505,53 @@ def test_job_search_returns_relevance_without_changing_eligibility(
     assert item["eligibility_status"] == "unknown"
 
 
+def test_job_search_sorts_by_relevance_before_pagination(job_context):
+    generic_id = job_context.post(
+        "/api/jobs",
+        json={
+            **valid_job(),
+            "title": "Office Coordinator",
+            "description": "Coordinate office schedules.",
+        },
+    ).json()["id"]
+
+    relevant_id = job_context.post(
+        "/api/jobs",
+        json={
+            **valid_job(),
+            "title": "Junior Python Backend Developer",
+            "description": "Build APIs using Python and FastAPI.",
+        },
+    ).json()["id"]
+
+    first_page = job_context.get(
+        "/api/jobs/search",
+        params={"sort_by": "relevance", "skip": 0, "limit": 1},
+    )
+    second_page = job_context.get(
+        "/api/jobs/search",
+        params={"sort_by": "relevance", "skip": 1, "limit": 1},
+    )
+
+    assert first_page.status_code == 200
+    assert second_page.status_code == 200
+    assert first_page.json()["total"] == 2
+    assert first_page.json()["items"][0]["id"] == relevant_id
+    assert second_page.json()["items"][0]["id"] == generic_id
+    assert (
+        first_page.json()["items"][0]["relevance_score"]
+        >= second_page.json()["items"][0]["relevance_score"]
+    )
+
+
+def test_job_search_rejects_invalid_sort_by(job_context):
+    response = job_context.get(
+        "/api/jobs/search",
+        params={"sort_by": "random"},
+    )
+    assert response.status_code == 422
+
+
 def test_job_search_rejects_invalid_pagination(job_context):
     assert job_context.get(
         "/api/jobs/search", params={"skip": -1}

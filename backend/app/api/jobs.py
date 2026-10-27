@@ -73,6 +73,7 @@ def search_jobs(
         default=None,
         pattern="^(active|closed|unknown)$",
     ),
+    sort_by: str = Query(default="newest", pattern="^(newest|relevance)$"),
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=20, ge=1, le=100),
     db: Session = Depends(get_db),
@@ -114,12 +115,21 @@ def search_jobs(
         count_statement = count_statement.where(*filters)
 
     total = db.scalar(count_statement) or 0
-    items = db.scalars(
-        statement
-        .order_by(Job.created_at.desc(), Job.id.desc())
-        .offset(skip)
-        .limit(limit)
-    ).all()
+
+    if sort_by == "relevance":
+        # Score every matching job before pagination so the order is global,
+        # not limited to the newest page.
+        items = db.scalars(
+            statement.order_by(Job.created_at.desc(), Job.id.desc())
+        ).all()
+    else:
+        # Preserve the existing efficient newest-first behavior.
+        items = db.scalars(
+            statement
+            .order_by(Job.created_at.desc(), Job.id.desc())
+            .offset(skip)
+            .limit(limit)
+        ).all()
 
     search_items = []
     for job in items:
@@ -139,6 +149,17 @@ def search_jobs(
                 "relevance_reasons": relevance["reasons"],
             }
         )
+
+    if sort_by == "relevance":
+        search_items.sort(
+            key=lambda item: (
+                item["relevance_score"],
+                item["created_at"],
+                item["id"],
+            ),
+            reverse=True,
+        )
+        search_items = search_items[skip : skip + limit]
 
     return {
         "items": search_items,
