@@ -39,8 +39,16 @@ class JobRead(BaseModel):
 
 
 
+class JobSearchItem(JobRead):
+    """A job with explainable, heuristic relevance metadata."""
+
+    relevance_score: int = Field(ge=0, le=100)
+    matched_role_families: list[str]
+    relevance_reasons: list[str]
+
+
 class JobSearchResult(BaseModel):
-    items: list[JobRead]
+    items: list[JobSearchItem]
     total: int
     skip: int
     limit: int

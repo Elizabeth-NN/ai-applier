@@ -16,6 +16,7 @@ from app.schemas.job import (
 from app.services.job_ingestion import ingest_jobicy_jobs
 from app.services.jobicy_adapter import JobicyAPIError
 from app.services.job_status_sync import sync_jobicy_statuses
+from app.services.job_relevance import score_job_relevance
 
 
 router = APIRouter(prefix="/api/jobs", tags=["Jobs"])
@@ -120,8 +121,27 @@ def search_jobs(
         .limit(limit)
     ).all()
 
+    search_items = []
+    for job in items:
+        job_data = JobRead.model_validate(job).model_dump()
+        relevance = score_job_relevance(
+            {
+                "title": job.title,
+                "description": job.description,
+                "employment_type": job.employment_type,
+            }
+        )
+        search_items.append(
+            {
+                **job_data,
+                "relevance_score": relevance["score"],
+                "matched_role_families": relevance["matched_role_families"],
+                "relevance_reasons": relevance["reasons"],
+            }
+        )
+
     return {
-        "items": items,
+        "items": search_items,
         "total": total,
         "skip": skip,
         "limit": limit,

@@ -474,6 +474,37 @@ def test_job_search_without_query_returns_all_jobs(job_context):
     assert len(response.json()["items"]) == 2
 
 
+def test_job_search_returns_relevance_without_changing_eligibility(
+    job_context,
+):
+    payload = valid_job()
+    payload["title"] = "Junior Python Backend Developer"
+    payload["description"] = "Build APIs with FastAPI and PostgreSQL."
+
+    created = job_context.post("/api/jobs", json=payload)
+    assert created.status_code == 201
+    job_id = created.json()["id"]
+
+    # Relevance is separate from the evidence-based eligibility decision.
+    with job_context.testing_session() as db:
+        job = db.get(Job, job_id)
+        assert job is not None
+        job.eligibility_status = "unknown"
+        db.commit()
+
+    response = job_context.get(
+        "/api/jobs/search", params={"q": "Junior Python"}
+    )
+
+    assert response.status_code == 200
+    item = response.json()["items"][0]
+    assert item["id"] == job_id
+    assert item["relevance_score"] >= 60
+    assert "Python/backend" in item["matched_role_families"]
+    assert item["relevance_reasons"]
+    assert item["eligibility_status"] == "unknown"
+
+
 def test_job_search_rejects_invalid_pagination(job_context):
     assert job_context.get(
         "/api/jobs/search", params={"skip": -1}
