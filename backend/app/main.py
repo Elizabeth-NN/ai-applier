@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from fastapi.middleware.cors import CORSMiddleware
+from contextlib import asynccontextmanager
 
 from app.api.cover_letter_generation import router as cover_letter_generation_router
 from app.api.cover_letter_drafts import router as cover_letter_drafts_router
@@ -12,10 +13,28 @@ from app.api.resumes import router as resumes_router
 from app.db.session import engine
 from app.core.auth import CurrentAdmin, CurrentUser
 
+from app.core.config import settings
+from app.services.jobicy_status_scheduler import (
+    start_jobicy_status_scheduler,
+    stop_jobicy_status_scheduler,
+)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    if settings.jobicy_status_sync_enabled:
+        start_jobicy_status_scheduler()
+
+    try:
+        yield
+    finally:
+        stop_jobicy_status_scheduler()
+
+
 app = FastAPI(
     title="AI Applier API",
     description="Backend API for the AI Applier job application platform.",
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
