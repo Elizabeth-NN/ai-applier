@@ -59,7 +59,18 @@ def prepare_generation(test_context, monkeypatch, resume_owner="user_test_1"):
     return application_id, resume_id
 
 
-def mock_gemini(monkeypatch, response_text="Dear Hiring Manager, I am applying for this role."):
+def mock_gemini(
+    monkeypatch,
+    response_text=(
+        "<cover_letter>Dear Hiring Manager,\\n\\n"
+        "I am applying for this role because my experience building and "
+        "testing web applications aligns with the position. I have worked "
+        "with Python, FastAPI, PostgreSQL, and Docker, and I look forward "
+        "to contributing these skills while continuing to grow as a "
+        "software developer.\\n\\nSincerely,\\nElizabeth"
+        "</cover_letter>"
+    ),
+):
     captured = {}
 
     class FakeResponse:
@@ -100,7 +111,7 @@ def test_generates_cover_letter_from_owned_resume(
     assert response.json()["content"].startswith("Dear Hiring Manager")
     assert "Junior Python Developer" in captured["json"]["contents"][0]["parts"][0]["text"]
     assert resume_text in captured["json"]["contents"][0]["parts"][0]["text"]
-    assert captured["params"]["key"] == "test-api-key"
+    assert captured["headers"]["x-goog-api-key"] == "test-api-key"
 
 
 def test_generation_requires_gemini_api_key(test_context, monkeypatch):
