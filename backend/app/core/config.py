@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     db_password: str
     clerk_secret_key: str
     gemini_api_key: str | None = None
-    gemini_model: str = "gemini-2.5-flash"
+    gemini_model: str = "gemma-4-26b-a4b-it"
 
     model_config = SettingsConfigDict(
         env_file=Path(__file__).resolve().parents[2] / ".env",

@@ -1,4 +1,5 @@
 import os
+import re
 import xml.etree.ElementTree as ET
 from io import BytesIO
 from pathlib import Path
@@ -25,6 +26,38 @@ router = APIRouter(
 )
 
 
+COVER_LETTER_RE = re.compile(
+    r"<cover_letter>\s*(.*?)\s*</cover_letter>", re.DOTALL | re.IGNORECASE
+)
+
+SYSTEM_INSTRUCTION = """You are an expert career coach who writes tailored cover letters.
+
+Rules:
+- Use only facts supported by the resume.
+- Do not invent qualifications, employers, achievements, dates, or metrics.
+- Never use words like "extensive", "expert", "seasoned" or "specialize" unless
+  the resume clearly supports them. If the applicant is junior or early-career,
+  present them honestly as a growing engineer with strong project work.
+- If the resume lists professional experience, mention that employer and role
+  by name, with one concrete thing the applicant did there.
+- Name at most two or three specific projects and say what was built, not just
+  the tools used.
+- If the job requires something the resume does not show (a technology, or years
+  of experience), do not claim it. Briefly acknowledge the gap by pointing to the
+  closest related experience and showing willingness to learn.
+- Avoid filler such as "valuable asset", "thrive in collaborative environments",
+  "bridge the gap" and "proactive". Do not just repeat the job description's
+  wording back.
+- Use a professional, natural tone.
+- Leave out postal addresses and other personal details not supplied.
+- Keep the letter under 300 words.
+
+Output format:
+- Do NOT output analysis, notes, checklists, drafts, or reasoning.
+- Output ONLY the final letter, wrapped in <cover_letter> and </cover_letter> tags.
+- Start with the greeting and end with the sign-off. No markdown fences."""
+
+
 class GenerateCoverLetterRequest(BaseModel):
     application_id: int = Field(gt=0)
     resume_id: int = Field(gt=0)
@@ -32,6 +65,15 @@ class GenerateCoverLetterRequest(BaseModel):
 
 class GeneratedCoverLetter(BaseModel):
     content: str
+
+
+def _generation_config() -> dict:
+    config: dict = {"temperature": 0.4, "maxOutputTokens": 2048}
+    # Disable thinking on Flash models so the token budget goes to the letter.
+    # (Not supported by 2.5 Pro or non-thinking models, so only set it here.)
+    if "2.5-flash" in settings.gemini_model:
+        config["thinkingConfig"] = {"thinkingBudget": 0}
+    return config
 
 
 def _extract_resume_text(path: Path, filename: str) -> str:
@@ -77,7 +119,7 @@ def _extract_resume_text(path: Path, filename: str) -> str:
 
     except HTTPException:
         raise
-    except (OSError, ValueError, BadZipFile, ET.ParseError) as exc:
+    except (OSError, ValueError, BadZipFile, ET.ParseError, KeyError) as exc:
         raise HTTPException(
             status_code=422,
             detail="The selected resume could not be read. Upload a valid PDF or DOCX.",
@@ -90,7 +132,7 @@ def _extract_resume_text(path: Path, filename: str) -> str:
             detail="Not enough readable text was found. Try a text-based PDF or DOCX.",
         )
 
-    return text[:16000]
+    return text[:8000]
 
 
 @router.post("", response_model=GeneratedCoverLetter)
@@ -152,23 +194,17 @@ def generate_cover_letter(
     prompt = f"""
 Write a tailored cover letter for the job below using the supplied resume.
 
-Rules:
-- Use only facts supported by the resume.
-- Do not invent qualifications, employers, achievements, dates, or metrics.
-- Connect relevant experience and skills to the actual job requirements.
-- Do not claim the applicant has experience that the resume does not establish.
-- Use a professional, natural tone and avoid generic filler.
-- Return only the cover letter, without explanations or markdown fences.
-- Leave out postal addresses and other personal details not supplied.
-
-JOB TITLE: {job.title}
+<job>
+TITLE: {job.title}
 COMPANY: {job.company or "Not specified"}
 
-JOB DESCRIPTION:
-{description[:10000]}
+DESCRIPTION:
+{description[:6000]}
+</job>
 
-RESUME TEXT:
+<resume>
 {resume_text}
+</resume>
 """.strip()
 
     endpoint = (
@@ -179,15 +215,13 @@ RESUME TEXT:
     try:
         response = httpx.post(
             endpoint,
-            params={"key": api_key},
+            headers={"x-goog-api-key": api_key},  # keeps the key out of URLs/logs
             json={
-                "contents": [{"parts": [{"text": prompt}]}],
-                "generationConfig": {
-                    "temperature": 0.4,
-                    "maxOutputTokens": 1200,
-                },
+                "systemInstruction": {"parts": [{"text": SYSTEM_INSTRUCTION}]},
+                "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                "generationConfig": _generation_config(),
             },
-            timeout=45.0,
+            timeout=90.0,
         )
         response.raise_for_status()
         data = response.json()
@@ -209,16 +243,36 @@ RESUME TEXT:
         ) from exc
 
     candidates = data.get("candidates") or []
-    parts = (
-        candidates[0].get("content", {}).get("parts", [])
-        if candidates
-        else []
-    )
-    content = "\n".join(
-        part.get("text", "") for part in parts if part.get("text")
+    if not candidates:
+        raise HTTPException(
+            status_code=502,
+            detail="The AI provider returned no result. Please try again.",
+        )
+
+    candidate = candidates[0]
+    if candidate.get("finishReason") == "MAX_TOKENS":
+        raise HTTPException(
+            status_code=502,
+            detail="The AI response was cut off. Please try again.",
+        )
+
+    parts = candidate.get("content", {}).get("parts", [])
+    raw_text = "\n".join(
+        part["text"]
+        for part in parts
+        if part.get("text") and not part.get("thought")  # skip thought summaries
     ).strip()
 
-    if not content:
+    match = COVER_LETTER_RE.search(raw_text)
+    if not match:
+        # Model ignored the format (or leaked reasoning / was truncated).
+        raise HTTPException(
+            status_code=502,
+            detail="The AI provider returned an unusable letter. Please try again.",
+        )
+
+    content = match.group(1).strip()
+    if len(content) < 100:
         raise HTTPException(
             status_code=502,
             detail="The AI provider returned an empty letter. Please try again.",
