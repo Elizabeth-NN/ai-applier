@@ -8,3 +8,4 @@ pytest
 httpx
 clerk-backend-api
 python-multipart
+pypdf>=5.0.0

@@ -17,6 +17,14 @@ type ApiJob = {
   location: string | null;
 };
 
+type ApiResume = {
+  id: number;
+  original_filename: string;
+  content_type: string;
+  size_bytes: number;
+  created_at: string;
+};
+
 type CoverLetterDraft = {
   id: number;
   application_id: number;
@@ -72,8 +80,11 @@ export default function CoverLetterDrafts({
 
   const [applications, setApplications] = useState<ApiApplication[]>([]);
   const [jobs, setJobs] = useState<ApiJob[]>([]);
+  const [resumes, setResumes] = useState<ApiResume[]>([]);
   const [drafts, setDrafts] = useState<CoverLetterDraft[]>([]);
   const [selectedApplicationId, setSelectedApplicationId] = useState("");
+  const [selectedResumeId, setSelectedResumeId] = useState("");
+  const [generating, setGenerating] = useState(false);
   const [selectedDraftId, setSelectedDraftId] = useState<number | null>(null);
   const [content, setContent] = useState("");
   const [loading, setLoading] = useState(true);
@@ -89,9 +100,10 @@ export default function CoverLetterDrafts({
       throw new Error("Your session has expired. Please sign in again.");
     }
 
-    const [loadedApplications, loadedDrafts] = await Promise.all([
+    const [loadedApplications, loadedDrafts, loadedResumes] = await Promise.all([
       apiRequest<ApiApplication[]>("/api/applications?limit=100", token),
       apiRequest<CoverLetterDraft[]>("/api/cover-letter-drafts?limit=100", token),
+      apiRequest<ApiResume[]>("/api/resumes", token),
     ]);
 
     const jobIds = [...new Set(loadedApplications.map((item) => item.job_id))];
@@ -104,7 +116,15 @@ export default function CoverLetterDrafts({
 
     setApplications(loadedApplications);
     setJobs(loadedJobs);
+    setResumes(loadedResumes);
     setDrafts(loadedDrafts);
+    setSelectedResumeId((current) =>
+      loadedResumes.some((resume) => String(resume.id) === current)
+        ? current
+        : loadedResumes[0]
+          ? String(loadedResumes[0].id)
+          : "",
+    );
 
     // Prefer the exact draft selected from My Documents.
     const requestedDraft = initialDraftId === null
@@ -219,6 +239,56 @@ export default function CoverLetterDrafts({
 
     setError("");
     setNotice("");
+  }
+
+  async function generateCoverLetter() {
+    if (!selectedApplication) {
+      setError("Select an application first.");
+      return;
+    }
+
+    if (!selectedResumeId) {
+      setError("Upload and select a resume first.");
+      return;
+    }
+
+    setGenerating(true);
+    setError("");
+    setNotice("");
+
+    try {
+      const token = await getToken();
+
+      if (!token) {
+        throw new Error("Please sign in again.");
+      }
+
+      const result = await apiRequest<{ content: string }>(
+        "/api/cover-letter-generation",
+        token,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            application_id: selectedApplication.id,
+            resume_id: Number(selectedResumeId),
+          }),
+        },
+      );
+
+      // Keep existing saved drafts untouched; this becomes a new draft.
+      setSelectedDraftId(null);
+      setContent(result.content);
+      setSavedContent(null);
+      setNotice("AI draft generated. Review it carefully before saving.");
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Could not generate a cover letter.",
+      );
+    } finally {
+      setGenerating(false);
+    }
   }
 
   async function saveDraft() {
@@ -461,6 +531,53 @@ export default function CoverLetterDrafts({
               <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">
                 {content.length.toLocaleString()}/20,000 characters
               </span>
+            </div>
+
+            <div className="mt-5 rounded-xl border border-violet-100 bg-violet-50/50 p-4">
+              <label className="block text-sm font-medium text-slate-700">
+                Generate from resume
+                <select
+                  value={selectedResumeId}
+                  onChange={(event) => setSelectedResumeId(event.target.value)}
+                  disabled={generating || resumes.length === 0}
+                  className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 outline-none focus:border-violet-400 disabled:opacity-60"
+                >
+                  {resumes.length === 0 ? (
+                    <option value="">No resumes uploaded</option>
+                  ) : (
+                    resumes.map((resume) => (
+                      <option key={resume.id} value={String(resume.id)}>
+                        {resume.original_filename}
+                      </option>
+                    ))
+                  )}
+                </select>
+              </label>
+
+              {resumes.length === 0 ? (
+                <p className="mt-2 text-sm text-slate-600">
+                  Upload a PDF or DOCX resume in My Documents before generating.
+                </p>
+              ) : (
+                <p className="mt-2 text-sm text-slate-600">
+                  Uses the selected job description and resume. Generated text
+                  is not saved until you choose to save it.
+                </p>
+              )}
+
+              <button
+                type="button"
+                onClick={() => void generateCoverLetter()}
+                disabled={
+                  generating ||
+                  !selectedApplication ||
+                  !selectedResumeId ||
+                  resumes.length === 0
+                }
+                className="mt-3 rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {generating ? "Generating..." : "Generate with AI"}
+              </button>
             </div>
 
             <label className="mt-5 block text-sm font-medium text-slate-700">

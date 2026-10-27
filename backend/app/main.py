@@ -3,6 +3,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.cover_letter_generation import router as cover_letter_generation_router
 from app.api.cover_letter_drafts import router as cover_letter_drafts_router
 from app.api.application_batches import router as application_batches_router
 from app.api.applications import router as applications_router
@@ -28,6 +29,7 @@ app.add_middleware(
 app.include_router(jobs_router)
 app.include_router(applications_router)
 app.include_router(application_batches_router)
+app.include_router(cover_letter_generation_router)
 app.include_router(cover_letter_drafts_router)
 app.include_router(resumes_router)
 

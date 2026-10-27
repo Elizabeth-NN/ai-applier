@@ -11,6 +11,8 @@ class Settings(BaseSettings):
     db_user: str = "ai_applier_user"
     db_password: str
     clerk_secret_key: str
+    gemini_api_key: str | None = None
+    gemini_model: str = "gemini-2.5-flash"
 
     model_config = SettingsConfigDict(
         env_file=Path(__file__).resolve().parents[2] / ".env",
