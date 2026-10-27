@@ -1,4 +1,5 @@
 """Synchronize the verified status of imported Jobicy listings."""
+from datetime import datetime, timezone
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -34,6 +35,7 @@ def sync_jobicy_statuses(db: Session) -> dict[str, int]:
     # Fetch all batches before changing any database records. If an API
     # request fails, existing statuses remain untouched.
     statuses = fetch_jobicy_statuses(valid_ids)
+    checked_at = datetime.now(timezone.utc)
 
     counts = {"checked": 0, "active": 0, "closed": 0, "unknown": 0}
 
@@ -48,6 +50,8 @@ def sync_jobicy_statuses(db: Session) -> dict[str, int]:
 
             status_value = statuses[source_id]
             job.listing_status = status_value
+            job.listing_status_checked_at = checked_at
+                                                                    
 
             counts["checked"] += 1
             counts[status_value] += 1

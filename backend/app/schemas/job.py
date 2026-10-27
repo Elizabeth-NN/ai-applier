@@ -33,6 +33,7 @@ class JobRead(BaseModel):
     eligibility_verified_at: datetime | None
     eligibility_verified_by: str | None
     listing_status: str
+    listing_status_checked_at: datetime | None
     published_at: datetime | None
     last_seen_at: datetime | None
     created_at: datetime
