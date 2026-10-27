@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.core.auth import CurrentAdmin
 from app.db.dependencies import get_db
-from app.modelob import Job
+from app.models.job import Job
 from app.schemas.job import (
     EligibilityVerificationRequest,
     JobCreate,

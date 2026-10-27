@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 import httpx
 import pytest
 from sqlalchemy import create_engine, select
@@ -176,10 +178,22 @@ def test_sync_updates_statuses_from_source(db_session, monkeypatch):
         "unknown",
     ]
 
+    # Every successfully checked listing, including unknown, gets a timestamp.
+    timestamps = [job.listing_status_checked_at for job in jobs]
+    assert all(timestamp is not None for timestamp in timestamps)
+    assert len(set(timestamps)) == 1
 
-def test_sync_failure_preserves_existing_statuses(db_session, monkeypatch):
-    add_job(db_session, "1", listing_status="active")
-    add_job(db_session, "2", listing_status="closed")
+
+def test_sync_failure_preserves_existing_statuses_and_timestamps(
+    db_session, monkeypatch
+):
+    original_timestamp = datetime(2026, 1, 15, 10, 30, tzinfo=timezone.utc)
+
+    first = add_job(db_session, "1", listing_status="active")
+    second = add_job(db_session, "2", listing_status="closed")
+    first.listing_status_checked_at = original_timestamp
+    second.listing_status_checked_at = original_timestamp
+    db_session.commit()
 
     def fail(_ids):
         raise JobicyAPIError("Simulated API failure")
@@ -193,7 +207,44 @@ def test_sync_failure_preserves_existing_statuses(db_session, monkeypatch):
     jobs = db_session.scalars(select(Job).order_by(Job.source_job_id)).all()
 
     assert [job.listing_status for job in jobs] == ["active", "closed"]
+    for job in jobs:
+        stored_timestamp = job.listing_status_checked_at
+        assert stored_timestamp is not None
+        # SQLite may return timezone-naive datetimes despite timezone=True.
+        assert stored_timestamp.replace(tzinfo=timezone.utc) == original_timestamp
 
+
+
+def test_sync_leaves_unreturned_jobs_unchanged(db_session, monkeypatch):
+    add_job(db_session, "1", listing_status="closed")
+    add_job(db_session, "2", listing_status="active")
+    untouched = add_job(db_session, "3", listing_status="closed")
+    original_timestamp = datetime(2026, 2, 1, 9, 0, tzinfo=timezone.utc)
+    untouched.listing_status_checked_at = original_timestamp
+    db_session.commit()
+
+    monkeypatch.setattr(
+        job_status_sync,
+        "fetch_jobicy_statuses",
+        lambda _ids: {"1": "active", "2": "closed"},
+    )
+
+    result = job_status_sync.sync_jobicy_statuses(db_session)
+
+    db_session.expire_all()
+    jobs = db_session.scalars(select(Job).order_by(Job.source_job_id)).all()
+
+    assert result == {
+        "checked": 2,
+        "active": 1,
+        "closed": 1,
+        "unknown": 0,
+    }
+    assert [job.listing_status for job in jobs] == ["active", "closed", "closed"]
+    assert jobs[2].listing_status_checked_at.replace(
+        tzinfo=timezone.utc
+    ) == original_timestamp
+    assert all(job.listing_status_checked_at is not None for job in jobs[:2])
 
 def test_sync_ignores_manual_jobs(db_session, monkeypatch):
     db_session.add(

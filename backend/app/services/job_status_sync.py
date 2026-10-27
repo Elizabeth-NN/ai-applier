@@ -51,7 +51,7 @@ def sync_jobicy_statuses(db: Session) -> dict[str, int]:
             status_value = statuses[source_id]
             job.listing_status = status_value
             job.listing_status_checked_at = checked_at
-                                                                    
+
 
             counts["checked"] += 1
             counts[status_value] += 1

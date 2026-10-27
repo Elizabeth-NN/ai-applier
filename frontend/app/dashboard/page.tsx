@@ -48,6 +48,7 @@ type ApiJob = {
   eligibility_verified_at: string | null;
   eligibility_verified_by: string | null;
   listing_status: string;
+  listing_status_checked_at: string | null;
   relevance_score?: number;
   matched_role_families?: string[];
   relevance_reasons?: string[];
@@ -69,6 +70,8 @@ type Job = {
   title: string;
   location: string;
   createdAt: string;
+  listingStatus: string;
+  listingStatusCheckedAt: string | null;
   color: string;
   letter: string;
   applicationId: number | null;
@@ -554,6 +557,8 @@ export default function DashboardPage() {
           title: job.title,
           location: job.location || "Location not specified",
           createdAt: new Date(job.created_at).toLocaleDateString(),
+          listingStatus: job.listing_status,
+          listingStatusCheckedAt: job.listing_status_checked_at,
           color: companyColors[index % companyColors.length],
           letter: job.company.trim().charAt(0).toUpperCase() || "J",
           applicationId: application?.id ?? null,
@@ -630,6 +635,8 @@ export default function DashboardPage() {
           title: job.title,
           location: job.location || "Location not specified",
           createdAt: new Date(job.created_at).toLocaleDateString(),
+          listingStatus: job.listing_status,
+          listingStatusCheckedAt: job.listing_status_checked_at,
           color: companyColors[index % companyColors.length],
           letter: job.company.trim().charAt(0).toUpperCase() || "J",
           applicationId: application.id,
@@ -1488,7 +1495,18 @@ export default function DashboardPage() {
                                 </span>
                                 <span className="flex items-center gap-1.5">
                                   <Clock size={14} />
-                                  {job.createdAt}
+                                  Added {job.createdAt}
+                                </span>
+                                <span className="flex items-center gap-1.5">
+                                  Listing: {job.listingStatus}
+                                </span>
+                                <span className="flex items-center gap-1.5">
+                                  Status checked:{" "}
+                                  {job.listingStatusCheckedAt
+                                    ? new Date(
+                                        job.listingStatusCheckedAt,
+                                      ).toLocaleString()
+                                    : "Not checked yet"}
                                 </span>
                               </div>
                             </div>
