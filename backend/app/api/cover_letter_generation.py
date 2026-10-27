@@ -232,9 +232,17 @@ DESCRIPTION:
             detail="AI generation timed out. Please try again.",
         ) from exc
     except httpx.HTTPStatusError as exc:
+        # Log provider diagnostics, but never log the request URL or API key.
+        error_body = exc.response.text[:1500]
+        print(
+            "[cover-letter] Gemini HTTP error:",
+            exc.response.status_code,
+            error_body,
+            flush=True,
+        )
         raise HTTPException(
             status_code=502,
-            detail="The AI provider could not generate the letter. Check the API key, model, quota, and try again.",
+            detail="The AI provider could not generate the letter. Check backend logs for diagnostic details.",
         ) from exc
     except (httpx.HTTPError, ValueError) as exc:
         raise HTTPException(
