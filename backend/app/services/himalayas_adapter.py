@@ -45,18 +45,41 @@ def _optional_text(raw: dict, key: str) -> str | None:
     return value or None
 
 
-def _published_at(raw: dict) -> datetime | None:
-    value = raw.get("pubDate")
+def _parse_timestamp(value, field_name: str) -> datetime | None:
+    """Parse an API timestamp as Unix seconds or an ISO-8601 string."""
     if value is None:
         return None
 
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise HimalayasAPIError("Job has an invalid pubDate timestamp")
-
     try:
-        return datetime.fromtimestamp(value, tz=timezone.utc)
-    except (OverflowError, OSError, ValueError) as exc:
-        raise HimalayasAPIError("Job has an invalid pubDate timestamp") from exc
+        if isinstance(value, bool):
+            raise ValueError("Boolean is not a timestamp")
+
+        if isinstance(value, (int, float)):
+            parsed = datetime.fromtimestamp(value, tz=timezone.utc)
+        elif isinstance(value, str) and value.strip():
+            parsed = datetime.fromisoformat(
+                value.strip().replace("Z", "+00:00")
+            )
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            else:
+                parsed = parsed.astimezone(timezone.utc)
+        else:
+            raise ValueError("Unsupported timestamp format")
+
+        return parsed
+    except (OverflowError, OSError, TypeError, ValueError) as exc:
+        raise HimalayasAPIError(
+            f"Job has an invalid {field_name} timestamp"
+        ) from exc
+
+
+def _published_at(raw: dict) -> datetime | None:
+    return _parse_timestamp(raw.get("pubDate"), "pubDate")
+
+
+def _expires_at(raw: dict) -> datetime | None:
+    return _parse_timestamp(raw.get("expiryDate"), "expiryDate")
 
 
 def normalize_job(raw: dict) -> dict:
@@ -105,6 +128,7 @@ def normalize_job(raw: dict) -> dict:
         "eligibility_status": "unknown",
         "listing_status": "unknown",
         "published_at": _published_at(raw),
+        "expires_at": _expires_at(raw),
     }
 
 

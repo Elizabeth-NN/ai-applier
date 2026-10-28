@@ -6,13 +6,43 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.job import Job
+from app.services.himalayas_adapter import fetch_himalayas_jobs
 from app.services.jobicy_adapter import fetch_jobicy_jobs
+
+
+def _is_expired(expires_at: datetime | None, now: datetime) -> bool:
+    """Return whether a listing's known expiry is in the past."""
+    if expires_at is None:
+        return False
+
+    # SQLite may return a naive datetime even when timezone=True.
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+
+    return expires_at <= now
+
+
+def _update_existing_job(existing: Job, fields: dict) -> None:
+    """Refresh source fields without erasing verified metadata."""
+    for field, value in fields.items():
+        if value is None:
+            continue
+
+        if field == "eligible_countries":
+            setattr(existing, field, value)
+        elif field == "eligibility_status":
+            if value != "unknown":
+                setattr(existing, field, value)
+        elif field == "listing_status":
+            # Feed data must not overwrite a reviewed listing status.
+            continue
+        else:
+            setattr(existing, field, value)
 
 
 def ingest_jobicy_jobs(db: Session) -> dict[str, int]:
     """Insert new Jobicy listings and refresh previously imported listings."""
-    # Fetch everything first. A network or pagination failure must not lead
-    # to a partial refresh or changes to existing listing statuses.
+    # Fetch everything first so feed failures cannot partially refresh data.
     incoming_jobs = fetch_jobicy_jobs()
     now = datetime.now(timezone.utc)
 
@@ -28,32 +58,10 @@ def ingest_jobicy_jobs(db: Session) -> dict[str, int]:
             existing = db.scalar(statement)
 
             if existing is None:
-                db.add(
-                    Job(
-                        **fields,
-                        last_seen_at=now,
-                    )
-                )
+                db.add(Job(**fields, last_seen_at=now))
                 inserted += 1
             else:
-                for field, value in fields.items():
-                    # Feed data must not erase useful existing values when
-                    # the source omits a field or returns None.
-                    if value is None:
-                        continue
-
-                    # The public feed does not establish country eligibility
-                    # or listing status. Preserve existing verified metadata.
-                    if field == "eligible_countries":
-                        setattr(existing, field, value)
-                    elif field == "eligibility_status":
-                        if value != "unknown":
-                            setattr(existing, field, value)
-                    elif field == "listing_status":
-                        continue
-                    else:
-                        setattr(existing, field, value)
-
+                _update_existing_job(existing, fields)
                 existing.last_seen_at = now
                 updated += 1
 
@@ -66,4 +74,67 @@ def ingest_jobicy_jobs(db: Session) -> dict[str, int]:
         "fetched": len(incoming_jobs),
         "inserted": inserted,
         "updated": updated,
+    }
+
+
+def ingest_himalayas_jobs(db: Session) -> dict[str, int]:
+    """Import Himalayas listings and close listings whose expiry has passed."""
+    # Fetch and validate the complete feed before modifying the database.
+    incoming_jobs = fetch_himalayas_jobs()
+    now = datetime.now(timezone.utc)
+
+    inserted = 0
+    updated = 0
+    expired = 0
+
+    try:
+        # Close previously imported Himalayas listings whose expiry has passed,
+        # including listings no longer present in the latest feed.
+        existing_himalayas_jobs = db.scalars(
+            select(Job).where(Job.source_name == "himalayas")
+        ).all()
+
+        for existing in existing_himalayas_jobs:
+            if _is_expired(existing.expires_at, now):
+                existing.listing_status = "closed"
+
+        for fields in incoming_jobs:
+            statement = select(Job).where(
+                Job.source_name == fields["source_name"],
+                Job.source_job_id == fields["source_job_id"],
+            )
+            existing = db.scalar(statement)
+            is_expired = _is_expired(fields.get("expires_at"), now)
+
+            if is_expired:
+                expired += 1
+
+                # Never create a new database record for an expired listing.
+                # If already imported, refresh its source data and close it.
+                if existing is not None:
+                    _update_existing_job(existing, fields)
+                    existing.listing_status = "closed"
+                    existing.last_seen_at = now
+                    updated += 1
+
+                continue
+
+            if existing is None:
+                db.add(Job(**fields, last_seen_at=now))
+                inserted += 1
+            else:
+                _update_existing_job(existing, fields)
+                existing.last_seen_at = now
+                updated += 1
+
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+    return {
+        "fetched": len(incoming_jobs),
+        "inserted": inserted,
+        "updated": updated,
+        "expired": expired,
     }

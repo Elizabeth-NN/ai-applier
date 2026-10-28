@@ -191,3 +191,182 @@ def test_manual_jobs_remain_separate_from_imported_jobs(
 
     assert result["inserted"] == 1
     assert count == 2
+
+
+def incoming_himalayas_job(title="Remote Python Developer", expires_at=None):
+    from datetime import datetime, timedelta, timezone
+
+    if expires_at is None:
+        expires_at = datetime.now(timezone.utc) + timedelta(days=30)
+
+    return {
+        "title": title,
+        "company": "Example Company",
+        "location": "Kenya",
+        "description": "Build backend services.",
+        "source_url": (
+            "https://himalayas.app/companies/example/jobs/python-developer"
+            "?utm_source=api"
+        ),
+        "employment_type": "Full-time",
+        "source_name": "himalayas",
+        "source_job_id": (
+            "https://himalayas.app/companies/example/jobs/python-developer"
+        ),
+        "remote_type": "remote",
+        "eligible_countries": None,
+        "eligibility_status": "unknown",
+        "listing_status": "unknown",
+        "published_at": None,
+        "expires_at": expires_at,
+    }
+
+
+def test_himalayas_ingestion_inserts_active_job(db_session, monkeypatch):
+    fields = incoming_himalayas_job()
+    monkeypatch.setattr(
+        job_ingestion, "fetch_himalayas_jobs", lambda: [fields]
+    )
+
+    result = job_ingestion.ingest_himalayas_jobs(db_session)
+    job = db_session.scalar(
+        select(Job).where(Job.source_name == "himalayas")
+    )
+
+    assert result == {
+        "fetched": 1, "inserted": 1, "updated": 0, "expired": 0
+    }
+    assert job is not None
+    assert job.source_url == fields["source_url"]
+    assert job.source_job_id == fields["source_job_id"]
+    assert job.expires_at is not None
+
+
+def test_himalayas_ingestion_updates_without_duplicate(
+    db_session, monkeypatch
+):
+    fields = incoming_himalayas_job()
+    monkeypatch.setattr(
+        job_ingestion, "fetch_himalayas_jobs", lambda: [fields]
+    )
+    job_ingestion.ingest_himalayas_jobs(db_session)
+
+    monkeypatch.setattr(
+        job_ingestion,
+        "fetch_himalayas_jobs",
+        lambda: [incoming_himalayas_job(title="Updated Developer")],
+    )
+    result = job_ingestion.ingest_himalayas_jobs(db_session)
+
+    assert result["inserted"] == 0
+    assert result["updated"] == 1
+    assert db_session.scalar(select(func.count()).select_from(Job)) == 1
+    job = db_session.scalar(
+        select(Job).where(Job.source_name == "himalayas")
+    )
+    assert job.title == "Updated Developer"
+
+
+def test_himalayas_ingestion_preserves_verified_metadata(
+    db_session, monkeypatch
+):
+    fields = incoming_himalayas_job()
+    fields.update(
+        eligible_countries=["Kenya"],
+        eligibility_status="eligible",
+        listing_status="active",
+        eligibility_evidence="Reviewed evidence",
+    )
+    existing = Job(**fields)
+    db_session.add(existing)
+    db_session.commit()
+
+    monkeypatch.setattr(
+        job_ingestion,
+        "fetch_himalayas_jobs",
+        lambda: [incoming_himalayas_job(title="Refreshed Developer")],
+    )
+    job_ingestion.ingest_himalayas_jobs(db_session)
+    db_session.refresh(existing)
+
+    assert existing.title == "Refreshed Developer"
+    assert existing.eligible_countries == ["Kenya"]
+    assert existing.eligibility_status == "eligible"
+    assert existing.listing_status == "active"
+    assert existing.eligibility_evidence == "Reviewed evidence"
+
+
+def test_himalayas_ingestion_skips_new_expired_job(
+    db_session, monkeypatch
+):
+    from datetime import datetime, timedelta, timezone
+
+    fields = incoming_himalayas_job(
+        expires_at=datetime.now(timezone.utc) - timedelta(days=1)
+    )
+    monkeypatch.setattr(
+        job_ingestion, "fetch_himalayas_jobs", lambda: [fields]
+    )
+
+    result = job_ingestion.ingest_himalayas_jobs(db_session)
+
+    assert result == {
+        "fetched": 1, "inserted": 0, "updated": 0, "expired": 1
+    }
+    assert db_session.scalar(select(func.count()).select_from(Job)) == 0
+
+
+def test_himalayas_ingestion_closes_previously_imported_expired_job(
+    db_session, monkeypatch
+):
+    from datetime import datetime, timedelta, timezone
+
+    fields = incoming_himalayas_job()
+    fields["listing_status"] = "active"
+    existing = Job(**fields)
+    db_session.add(existing)
+    db_session.commit()
+
+    existing.expires_at = datetime.now(timezone.utc) - timedelta(days=1)
+    db_session.commit()
+    monkeypatch.setattr(
+        job_ingestion, "fetch_himalayas_jobs", lambda: []
+    )
+
+    job_ingestion.ingest_himalayas_jobs(db_session)
+    db_session.refresh(existing)
+
+    assert existing.listing_status == "closed"
+
+
+def test_himalayas_ingestion_failure_does_not_change_existing_jobs(
+    db_session, monkeypatch
+):
+    from app.services.himalayas_adapter import HimalayasAPIError
+
+    fields = incoming_himalayas_job()
+    monkeypatch.setattr(
+        job_ingestion, "fetch_himalayas_jobs", lambda: [fields]
+    )
+    job_ingestion.ingest_himalayas_jobs(db_session)
+
+    existing = db_session.scalar(
+        select(Job).where(Job.source_name == "himalayas")
+    )
+    original_seen_at = existing.last_seen_at
+
+    def failed_fetch():
+        raise HimalayasAPIError("Simulated upstream failure")
+
+    monkeypatch.setattr(
+        job_ingestion, "fetch_himalayas_jobs", failed_fetch
+    )
+    with pytest.raises(HimalayasAPIError):
+        job_ingestion.ingest_himalayas_jobs(db_session)
+
+    db_session.expire_all()
+    unchanged = db_session.scalar(
+        select(Job).where(Job.source_name == "himalayas")
+    )
+    assert unchanged.last_seen_at == original_seen_at
+    assert unchanged.listing_status == "unknown"

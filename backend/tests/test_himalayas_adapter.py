@@ -50,6 +50,37 @@ def test_normalize_job_maps_himalayas_fields():
     assert result["published_at"] is not None
 
 
+
+
+def test_normalize_job_parses_iso_timestamps_and_expiry():
+    raw = sample_job()
+    raw["pubDate"] = "2026-10-28T07:15:46+00:00"
+    raw["expiryDate"] = "2026-12-27T07:15:45+00:00"
+
+    result = normalize_job(raw)
+
+    assert result["published_at"].isoformat() == "2026-10-28T07:15:46+00:00"
+    assert result["expires_at"].isoformat() == "2026-12-27T07:15:45+00:00"
+
+
+def test_normalize_job_parses_unix_timestamps():
+    raw = sample_job()
+    raw["pubDate"] = 1793171746
+    raw["expiryDate"] = 1798442145
+
+    result = normalize_job(raw)
+
+    assert result["published_at"] is not None
+    assert result["expires_at"] is not None
+
+
+def test_normalize_job_rejects_invalid_expiry_timestamp():
+    raw = sample_job()
+    raw["expiryDate"] = "not-a-date"
+
+    with pytest.raises(HimalayasAPIError):
+        normalize_job(raw)
+
 @pytest.mark.parametrize(
     "overrides",
     [
