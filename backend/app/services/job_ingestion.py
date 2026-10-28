@@ -138,3 +138,125 @@ def ingest_himalayas_jobs(db: Session) -> dict[str, int]:
         "updated": updated,
         "expired": expired,
     }
+
+def ingest_himalayas_batch(
+    db: Session,
+    *,
+    max_pages: int = 5,
+) -> dict:
+    """Import a bounded Himalayas batch and persist resumable progress."""
+    from sqlalchemy import update
+
+    from app.models.himalayas_ingestion_state import (
+        HimalayasIngestionState,
+    )
+    from app.services.himalayas_adapter import fetch_himalayas_batch
+
+    if not 1 <= max_pages <= 25:
+        raise ValueError("max_pages must be between 1 and 25")
+
+    now = datetime.now(timezone.utc)
+
+    try:
+        # Create the singleton row if this is the first batch.
+        # PostgreSQL's conflict handling makes initialization safe when
+        # two administrators start at nearly the same time.
+        db.execute(
+            __import__("sqlalchemy").text(
+                """
+                INSERT INTO himalayas_ingestion_state (id, status)
+                VALUES (1, 'running')
+                ON CONFLICT (id) DO NOTHING
+                """
+            )
+        )
+        db.flush()
+
+        state = db.scalar(
+            select(HimalayasIngestionState)
+            .where(HimalayasIngestionState.id == 1)
+            .with_for_update()
+        )
+        if state is None:
+            raise RuntimeError("Could not initialize ingestion state")
+
+        # A completed scan starts a fresh scan when called again.
+        if state.status == "completed":
+            state.cursor = None
+            state.status = "running"
+            state.pages_fetched = 0
+            state.fetched = 0
+            state.inserted = 0
+            state.updated = 0
+            state.expired = 0
+            state.started_at = now
+            state.completed_at = None
+        elif state.started_at is None:
+            state.started_at = now
+
+        batch = fetch_himalayas_batch(
+            cursor=state.cursor,
+            max_pages=max_pages,
+        )
+
+        inserted = updated = expired = 0
+
+        for fields in batch["jobs"]:
+            statement = select(Job).where(
+                Job.source_name == fields["source_name"],
+                Job.source_job_id == fields["source_job_id"],
+            )
+            existing = db.scalar(statement)
+            is_expired = _is_expired(fields.get("expires_at"), now)
+
+            if is_expired:
+                expired += 1
+                if existing is not None:
+                    _update_existing_job(existing, fields)
+                    existing.listing_status = "closed"
+                    existing.last_seen_at = now
+                    updated += 1
+                continue
+
+            if existing is None:
+                db.add(Job(**fields, last_seen_at=now))
+                inserted += 1
+            else:
+                _update_existing_job(existing, fields)
+                existing.last_seen_at = now
+                updated += 1
+
+        state.cursor = batch["next_cursor"]
+        state.pages_fetched += batch["pages_fetched"]
+        state.fetched += len(batch["jobs"])
+        state.inserted += inserted
+        state.updated += updated
+        state.expired += expired
+        state.updated_at = now
+
+        if batch["complete"]:
+            state.status = "completed"
+            state.completed_at = now
+            state.cursor = None
+        else:
+            state.status = "running"
+
+        db.commit()
+
+        return {
+            "status": state.status,
+            "pages_this_batch": batch["pages_fetched"],
+            "fetched_this_batch": len(batch["jobs"]),
+            "inserted_this_batch": inserted,
+            "updated_this_batch": updated,
+            "expired_this_batch": expired,
+            "pages_fetched": state.pages_fetched,
+            "fetched": state.fetched,
+            "inserted": state.inserted,
+            "updated": state.updated,
+            "expired": state.expired,
+            "completed": batch["complete"],
+        }
+    except Exception:
+        db.rollback()
+        raise

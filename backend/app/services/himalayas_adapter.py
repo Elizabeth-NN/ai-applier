@@ -202,3 +202,88 @@ def fetch_himalayas_jobs(
     finally:
         if owns_client:
             client.close()
+
+
+def fetch_himalayas_batch(
+    *,
+    cursor: str | None = None,
+    max_pages: int = 5,
+    client: httpx.Client | None = None,
+) -> dict:
+    """Fetch a bounded batch and return its resumable pagination cursor."""
+    if not 1 <= max_pages <= 25:
+        raise ValueError("max_pages must be between 1 and 25")
+
+    owns_client = client is None
+    if client is None:
+        client = httpx.Client(
+            timeout=REQUEST_TIMEOUT_SECONDS,
+            follow_redirects=True,
+        )
+
+    jobs: list[dict] = []
+    seen_cursors: set[str] = set()
+    current_cursor = cursor
+    pages_fetched = 0
+
+    try:
+        for _ in range(max_pages):
+            params = {"limit": PAGE_SIZE}
+            if current_cursor is not None:
+                params["cursor"] = current_cursor
+
+            try:
+                response = client.get(HIMALAYAS_API_URL, params=params)
+                response.raise_for_status()
+                payload = response.json()
+            except (httpx.HTTPError, ValueError) as exc:
+                raise HimalayasAPIError(
+                    "Could not retrieve a valid Himalayas API response"
+                ) from exc
+
+            if not isinstance(payload, dict):
+                raise HimalayasAPIError(
+                    "Himalayas response must be an object"
+                )
+
+            page_jobs = payload.get("jobs")
+            if not isinstance(page_jobs, list):
+                raise HimalayasAPIError(
+                    "Himalayas response is missing a valid jobs list"
+                )
+
+            normalized_page = [normalize_job(job) for job in page_jobs]
+            jobs.extend(normalized_page)
+            pages_fetched += 1
+
+            next_cursor = payload.get("nextCursor")
+            if next_cursor is None or next_cursor == "":
+                return {
+                    "jobs": jobs,
+                    "next_cursor": None,
+                    "pages_fetched": pages_fetched,
+                    "complete": True,
+                }
+
+            if not isinstance(next_cursor, str):
+                raise HimalayasAPIError(
+                    "Himalayas response contains an invalid nextCursor"
+                )
+
+            if next_cursor == current_cursor or next_cursor in seen_cursors:
+                raise HimalayasAPIError(
+                    "Himalayas pagination returned a repeated cursor"
+                )
+
+            seen_cursors.add(next_cursor)
+            current_cursor = next_cursor
+
+        return {
+            "jobs": jobs,
+            "next_cursor": current_cursor,
+            "pages_fetched": pages_fetched,
+            "complete": False,
+        }
+    finally:
+        if owns_client:
+            client.close()

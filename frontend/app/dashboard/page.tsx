@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { useAuth } from "@clerk/nextjs";
 import {
   SquaresFour,
@@ -66,6 +66,30 @@ type ApiApplication = {
   applied_at: string | null;
   created_at: string;
   updated_at: string;
+};
+
+type ApiResume = {
+  id: number;
+  original_filename: string;
+  content_type: string;
+  size_bytes: number;
+  created_at: string;
+};
+
+type ResumeJobMatch = ApiJob & {
+  match_score: number;
+  matched_terms: string[];
+  terms_not_found_in_resume: string[];
+  match_reasons: string[];
+};
+
+type ResumeJobMatchResult = {
+  resume_id: number;
+  resume_filename: string;
+  items: ResumeJobMatch[];
+  total: number;
+  skip: number;
+  limit: number;
 };
 
 type Job = {
@@ -396,6 +420,14 @@ export default function DashboardPage() {
   const pageSize = 20;
   const [view, setView] = useState<"board" | "list">("board");
   const [apiJobs, setApiJobs] = useState<ApiJob[]>([]);
+  const [resumes, setResumes] = useState<ApiResume[]>([]);
+  const [selectedResumeId, setSelectedResumeId] = useState("");
+  const [resumeMatches, setResumeMatches] =
+    useState<ResumeJobMatchResult | null>(null);
+  const [resumesLoading, setResumesLoading] = useState(false);
+  const [matchingLoading, setMatchingLoading] = useState(false);
+  const [resumeMatchError, setResumeMatchError] = useState("");
+  const [resumeMatchNotice, setResumeMatchNotice] = useState("");
   const [applications, setApplications] = useState<ApiApplication[]>([]);
   const [trackedApiJobs, setTrackedApiJobs] = useState<ApiJob[]>([]);
   const [notice, setNotice] = useState("");
@@ -761,10 +793,91 @@ export default function DashboardPage() {
     }
   }
 
+  const loadResumes = useCallback(async () => {
+    setResumesLoading(true);
+    setResumeMatchError("");
+
+    try {
+      const token = await getToken();
+      if (!token) throw new Error("Please sign in again.");
+
+      const result = await apiRequest<ApiResume[]>("/api/resumes", token);
+      setResumes(result);
+
+      setSelectedResumeId((current) => {
+        if (current && result.some((resume) => String(resume.id) === current)) {
+          return current;
+        }
+        return result[0] ? String(result[0].id) : "";
+      });
+    } catch (err) {
+      setResumeMatchError(
+        err instanceof Error ? err.message : "Could not load your resumes.",
+      );
+    } finally {
+      setResumesLoading(false);
+    }
+  }, [getToken]);
+
+  useEffect(() => {
+    if (activePage !== "Job Matches" || !isLoaded || !isSignedIn) return;
+
+    let cancelled = false;
+
+    const timer = setTimeout(() => {
+      if (!cancelled) void loadResumes();
+    }, 0);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [activePage, isLoaded, isSignedIn, loadResumes]);
+
+  async function matchJobsToResume() {
+    if (!selectedResumeId || matchingLoading) return;
+
+    setMatchingLoading(true);
+    setResumeMatchError("");
+    setResumeMatchNotice("");
+    setResumeMatches(null);
+
+    try {
+      const token = await getToken();
+      if (!token) throw new Error("Please sign in again.");
+
+      const params = new URLSearchParams({
+        resume_id: selectedResumeId,
+        skip: "0",
+        limit: "100",
+      });
+
+      const result = await apiRequest<ResumeJobMatchResult>(
+        `/api/jobs/matches?${params.toString()}`,
+        token,
+      );
+
+      setResumeMatches(result);
+      setResumeMatchNotice(
+        result.total === 0
+          ? "No jobs are available to match yet."
+          : `Matched ${result.total} jobs against ${result.resume_filename}.`,
+      );
+    } catch (err) {
+      setResumeMatchError(
+        err instanceof Error ? err.message : "Could not match jobs to your resume.",
+      );
+    } finally {
+      setMatchingLoading(false);
+    }
+  }
+
   async function saveJob(jobId: number) {
     if (savingJobId !== null) return;
 
-    const job = apiJobs.find((item) => item.id === jobId);
+    const job =
+      apiJobs.find((item) => item.id === jobId) ??
+      resumeMatches?.items.find((item) => item.id === jobId);
     if (!job) return;
 
     const existing = applications.find((item) => item.job_id === jobId);
@@ -1345,6 +1458,238 @@ export default function DashboardPage() {
               </>
             )}
 
+            {activePage === "Job Matches" && (
+              <section className="space-y-5 rounded-2xl border border-violet-100 bg-white p-5 sm:p-6">
+                <div>
+                  <h2 className="text-lg font-extrabold text-slate-900">
+                    Match jobs to your resume
+                  </h2>
+                  <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-600">
+                    Compare your resume with stored job descriptions. Scores
+                    measure text overlap, not your probability of being hired.
+                    Eligibility and listing status are assessed separately.
+                  </p>
+                </div>
+
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+                  <label className="min-w-0 flex-1 space-y-1.5">
+                    <span className="text-sm font-semibold text-slate-700">
+                      Resume
+                    </span>
+                    <select
+                      value={selectedResumeId}
+                      onChange={(event) => {
+                        setSelectedResumeId(event.target.value);
+                        setResumeMatches(null);
+                        setResumeMatchError("");
+                        setResumeMatchNotice("");
+                      }}
+                      disabled={resumesLoading || resumes.length === 0}
+                      className="w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm"
+                    >
+                      <option value="">
+                        {resumesLoading
+                          ? "Loading resumes..."
+                          : resumes.length === 0
+                            ? "No resumes uploaded"
+                            : "Choose a resume"}
+                      </option>
+                      {resumes.map((resume) => (
+                        <option key={resume.id} value={String(resume.id)}>
+                          {resume.original_filename}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <button
+                    type="button"
+                    onClick={() => void matchJobsToResume()}
+                    disabled={!selectedResumeId || matchingLoading || resumesLoading}
+                    className="rounded-xl bg-violet-600 px-5 py-3 text-sm font-bold text-white transition hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {matchingLoading ? "Matching jobs..." : "Match my resume"}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => void loadResumes()}
+                    disabled={resumesLoading}
+                    className="rounded-xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                  >
+                    Refresh resumes
+                  </button>
+                </div>
+
+                {!resumesLoading && resumes.length === 0 && (
+                  <p className="text-sm text-slate-600">
+                    Upload a PDF or DOCX resume in My Documents first.
+                    <button
+                      type="button"
+                      onClick={() => setActivePage("My Documents")}
+                      className="ml-1 font-semibold text-violet-700 underline underline-offset-2"
+                    >
+                      Open My Documents
+                    </button>
+                  </p>
+                )}
+
+                {resumeMatchError && (
+                  <p role="alert" className="rounded-xl bg-rose-50 p-3 text-sm text-rose-700">
+                    {resumeMatchError}
+                  </p>
+                )}
+
+                {resumeMatchNotice && (
+                  <p role="status" className="text-sm text-slate-600">
+                    {resumeMatchNotice}
+                  </p>
+                )}
+
+                {resumeMatches && (
+                  <div className="space-y-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-4">
+                      <h3 className="font-bold text-slate-900">
+                        Resume match results
+                      </h3>
+                      <span className="text-sm text-slate-500">
+                        {resumeMatches.total} jobs analysed
+                      </span>
+                    </div>
+
+                    {resumeMatches.items.length === 0 && (
+                      <p className="rounded-xl bg-slate-50 p-4 text-sm text-slate-600">
+                        No stored jobs were available to compare with this resume.
+                      </p>
+                    )}
+
+                    {resumeMatches.items.map((match) => {
+                      const application = applications.find(
+                        (item) => item.job_id === match.id,
+                      );
+                      const alreadyTracked = application !== undefined;
+
+                      return (
+                        <article
+                          key={match.id}
+                          className="rounded-xl border border-slate-200 p-4 sm:p-5"
+                        >
+                          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                            <div className="min-w-0">
+                              <h4 className="font-bold text-slate-900">
+                                {match.title}
+                              </h4>
+                              <p className="mt-1 text-sm text-slate-600">
+                                {match.company}
+                                {match.location ? ` · ${match.location}` : ""}
+                              </p>
+                              <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                                <span className="rounded-full bg-slate-100 px-2.5 py-1 font-medium text-slate-700">
+                                  Listing: {match.listing_status}
+                                </span>
+                                <span className="rounded-full bg-slate-100 px-2.5 py-1 font-medium text-slate-700">
+                                  Kenya eligibility: {match.eligibility_status}
+                                </span>
+                              </div>
+                            </div>
+
+                            <div className="shrink-0 rounded-xl bg-violet-50 px-4 py-3 text-center">
+                              <p className="text-2xl font-extrabold text-violet-800">
+                                {match.match_score}
+                                <span className="text-sm">/100</span>
+                              </p>
+                              <p className="text-xs font-semibold text-violet-700">
+                                Text match
+                              </p>
+                            </div>
+                          </div>
+
+                          {match.match_reasons.length > 0 && (
+                            <ul className="mt-4 space-y-1 text-sm text-slate-600">
+                              {match.match_reasons.map((reason, index) => (
+                                <li key={`${index}-${reason}`}>{reason}</li>
+                              ))}
+                            </ul>
+                          )}
+
+                          {match.matched_terms.length > 0 && (
+                            <div className="mt-4">
+                              <p className="text-xs font-bold uppercase tracking-wide text-slate-500">
+                                Terms found in your resume
+                              </p>
+                              <div className="mt-2 flex flex-wrap gap-1.5">
+                                {match.matched_terms.map((term) => (
+                                  <span
+                                    key={term}
+                                    className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-800"
+                                  >
+                                    {term}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {match.terms_not_found_in_resume.length > 0 && (
+                            <div className="mt-4">
+                              <p className="text-xs font-bold uppercase tracking-wide text-slate-500">
+                                Terms not found in your resume
+                              </p>
+                              <div className="mt-2 flex flex-wrap gap-1.5">
+                                {match.terms_not_found_in_resume.map((term) => (
+                                  <span
+                                    key={term}
+                                    className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-800"
+                                  >
+                                    {term}
+                                  </span>
+                                ))}
+                              </div>
+                              <p className="mt-2 text-xs text-slate-500">
+                                These terms may be absent from the document text;
+                                this does not prove you lack the skills.
+                              </p>
+                            </div>
+                          )}
+
+                          <div className="mt-4 flex flex-wrap items-center gap-3">
+                            {match.source_url && (
+                              <a
+                                href={match.source_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-sm font-semibold text-violet-700 underline underline-offset-2"
+                              >
+                                View job listing
+                              </a>
+                            )}
+
+                            <button
+                              type="button"
+                              onClick={() => void saveJob(match.id)}
+                              disabled={
+                                savingJobId === match.id ||
+                                (alreadyTracked && application.status !== "saved")
+                              }
+                              className="rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              {savingJobId === match.id
+                                ? "Saving..."
+                                : alreadyTracked
+                                  ? application.status === "saved"
+                                    ? "Mark applied"
+                                    : `Tracked: ${statusLabels[application.status]}`
+                                  : "Save job"}
+                            </button>
+                          </div>
+                        </article>
+                      );
+                    })}
+                  </div>
+                )}
+              </section>
+            )}
+
             {(activePage === "Dashboard" ||
               activePage === "Job Matches") && (
               <section className={`grid grid-cols-1 gap-6 ${activePage === "Dashboard" ? "xl:grid-cols-1" : "xl:grid-cols-3"}`}>
@@ -1631,24 +1976,24 @@ export default function DashboardPage() {
                             </button>
                           </div>
 
-                          <EligibilityVerificationPanel
-                            job={
-                              apiJobs.find((item) => item.id === job.id)!
-                            }
-                            isAdmin={isAdmin}
-                            onUpdated={(updated) => {
-                              setApiJobs((current) =>
-                                current.map((item) =>
-                                  item.id === updated.id ? updated : item,
-                                ),
-                              );
-                              setTrackedApiJobs((current) =>
-                                current.map((item) =>
-                                  item.id === updated.id ? updated : item,
-                                ),
-                              );
-                            }}
-                          />
+                          {apiJobs.some((item) => item.id === job.id) && (
+                            <EligibilityVerificationPanel
+                              job={apiJobs.find((item) => item.id === job.id)!}
+                              isAdmin={isAdmin}
+                              onUpdated={(updated) => {
+                                setApiJobs((current) =>
+                                  current.map((item) =>
+                                    item.id === updated.id ? updated : item,
+                                  ),
+                                );
+                                setTrackedApiJobs((current) =>
+                                  current.map((item) =>
+                                    item.id === updated.id ? updated : item,
+                                  ),
+                                );
+                              }}
+                            />
+                          )}
                         </article>
                       ))}
                     </div>

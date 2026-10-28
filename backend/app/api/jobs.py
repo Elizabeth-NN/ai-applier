@@ -340,3 +340,21 @@ def get_job(job_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Job not found")
 
     return job
+
+
+@router.post("/ingest/himalayas/batch")
+def refresh_himalayas_batch(
+    _admin_id: CurrentAdmin,
+    db: Session = Depends(get_db),
+    max_pages: int = Query(default=5, ge=1, le=25),
+):
+    """Import or resume a bounded batch from the Himalayas feed."""
+    from app.services.job_ingestion import ingest_himalayas_batch
+
+    try:
+        return ingest_himalayas_batch(db, max_pages=max_pages)
+    except HimalayasAPIError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Himalayas could not provide a valid batch.",
+        ) from exc
