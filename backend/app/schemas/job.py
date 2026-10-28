@@ -35,6 +35,7 @@ class JobRead(BaseModel):
     listing_status: str
     listing_status_checked_at: datetime | None
     published_at: datetime | None
+    expires_at: datetime | None
     last_seen_at: datetime | None
     created_at: datetime
 

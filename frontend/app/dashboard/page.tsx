@@ -40,6 +40,10 @@ type ApiJob = {
   title: string;
   location: string | null;
   created_at: string;
+  source_url: string | null;
+  source_name: string | null;
+  source_job_id: string | null;
+  expires_at: string | null;
   remote_type: string | null;
   eligible_countries: string[] | null;
   eligibility_status: string;
@@ -70,6 +74,10 @@ type Job = {
   title: string;
   location: string;
   createdAt: string;
+  sourceUrl?: string | null;
+  sourceName?: string | null;
+  sourceJobId?: string | null;
+  expiresAt?: string | null;
   listingStatus: string;
   listingStatusCheckedAt: string | null;
   color: string;
@@ -396,6 +404,7 @@ export default function DashboardPage() {
   const [savingJobId, setSavingJobId] = useState<number | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [isImportingJobicy, setIsImportingJobicy] = useState(false);
+  const [isImportingHimalayas, setIsImportingHimalayas] = useState(false);
   const [showJobForm, setShowJobForm] = useState(false);
   const [creatingJob, setCreatingJob] = useState(false);
   const [jobFormError, setJobFormError] = useState("");
@@ -557,6 +566,10 @@ export default function DashboardPage() {
           title: job.title,
           location: job.location || "Location not specified",
           createdAt: new Date(job.created_at).toLocaleDateString(),
+          sourceUrl: job.source_url,
+          sourceName: job.source_name,
+          sourceJobId: job.source_job_id,
+          expiresAt: job.expires_at,
           listingStatus: job.listing_status,
           listingStatusCheckedAt: job.listing_status_checked_at,
           color: companyColors[index % companyColors.length],
@@ -830,6 +843,46 @@ export default function DashboardPage() {
     }
   }
 
+  async function importHimalayas() {
+    if (isImportingHimalayas) return;
+
+    setIsImportingHimalayas(true);
+    setError("");
+    setNotice("");
+
+    try {
+      const token = await getToken();
+      if (!token) {
+        throw new Error("Your session has expired. Please sign in again.");
+      }
+
+      const result = await apiRequest<{
+        fetched: number;
+        inserted: number;
+        updated: number;
+        expired: number;
+      }>("/api/jobs/ingest/himalayas", token, {
+        method: "POST",
+      });
+
+      setJobPage(1);
+      setJobsRefreshKey((current) => current + 1);
+      setNotice(
+        `Himalayas import complete: ${result.fetched} fetched, ` +
+        `${result.inserted} inserted, ${result.updated} updated, ` +
+        `${result.expired} expired.`,
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Could not import Himalayas jobs.",
+      );
+    } finally {
+      setIsImportingHimalayas(false);
+    }
+  }
+
   async function createJob(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setCreatingJob(true);
@@ -1033,6 +1086,21 @@ export default function DashboardPage() {
                 >
                   <span>
                     {isImportingJobicy ? "Importing jobs..." : "Import Jobicy jobs"}
+                  </span>
+                </button>
+              )}
+
+              {isAdmin && (
+                <button
+                  type="button"
+                  onClick={importHimalayas}
+                  disabled={isImportingHimalayas}
+                  className="flex shrink-0 items-center gap-2 rounded-xl border border-sky-200 bg-white px-3 py-2.5 text-sm font-semibold text-sky-700 transition hover:bg-sky-50 disabled:cursor-not-allowed disabled:opacity-60 sm:px-4"
+                >
+                  <span>
+                    {isImportingHimalayas
+                      ? "Importing jobs..."
+                      : "Import Himalayas jobs"}
                   </span>
                 </button>
               )}
@@ -1445,6 +1513,31 @@ export default function DashboardPage() {
                               <p className="mt-1 text-sm text-slate-600">
                                 {job.company}
                               </p>
+
+                              {job.sourceName && (
+                                <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                                  {job.sourceJobId && (
+                                    <a
+                                      href={job.sourceJobId}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="font-medium text-slate-600 underline decoration-slate-300 underline-offset-2 hover:text-violet-700"
+                                    >
+                                      Source: {job.sourceName}
+                                    </a>
+                                  )}
+                                  {job.sourceUrl && (
+                                    <a
+                                      href={job.sourceUrl}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="font-semibold text-violet-700 underline decoration-violet-300 underline-offset-2 hover:text-violet-900"
+                                    >
+                                      Apply on {job.sourceName}
+                                    </a>
+                                  )}
+                                </div>
+                              )}
 
                               {job.relevanceScore !== undefined && (
                                 <div className="mt-3 rounded-xl border border-violet-100 bg-violet-50/70 p-3">

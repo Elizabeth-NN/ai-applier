@@ -13,7 +13,11 @@ from app.schemas.job import (
     JobRead,
     JobSearchResult,
 )
-from app.services.job_ingestion import ingest_jobicy_jobs
+from app.services.job_ingestion import (
+    ingest_himalayas_jobs,
+    ingest_jobicy_jobs,
+)
+from app.services.himalayas_adapter import HimalayasAPIError
 from app.services.jobicy_adapter import JobicyAPIError
 from app.services.job_status_sync import sync_jobicy_statuses
 from app.services.job_relevance import score_job_relevance
@@ -181,6 +185,21 @@ def refresh_jobicy_jobs(
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Jobicy could not provide a complete, valid feed.",
+        ) from exc
+
+
+@router.post("/ingest/himalayas")
+def refresh_himalayas_jobs(
+    _admin_id: CurrentAdmin,
+    db: Session = Depends(get_db),
+):
+    """Import and refresh jobs from the public Himalayas feed."""
+    try:
+        return ingest_himalayas_jobs(db)
+    except HimalayasAPIError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Himalayas could not provide a complete, valid feed.",
         ) from exc
 
 
