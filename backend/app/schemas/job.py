@@ -56,6 +56,26 @@ class JobSearchResult(BaseModel):
     limit: int
 
 
+class ResumeJobMatchItem(JobRead):
+    """A job with explainable text overlap against a selected resume."""
+
+    match_score: int = Field(ge=0, le=100)
+    matched_terms: list[str]
+    terms_not_found_in_resume: list[str]
+    match_reasons: list[str]
+
+
+class ResumeJobMatchResult(BaseModel):
+    """Paginated personalized job matches for a user's resume."""
+
+    resume_id: int
+    resume_filename: str
+    items: list[ResumeJobMatchItem]
+    total: int
+    skip: int
+    limit: int
+
+
 class EligibilityVerificationRequest(BaseModel):
     """Evidence-backed verification of a job's eligibility in Kenya."""
 

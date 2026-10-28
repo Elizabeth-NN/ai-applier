@@ -1,17 +1,22 @@
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pathlib import Path
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from app.core.auth import CurrentAdmin
+from app.core.auth import CurrentAdmin, CurrentUser
+from app.api import resumes as resumes_api
 from app.db.dependencies import get_db
 from app.models.job import Job
+from app.services.resume_text import extract_resume_text
+from app.services.resume_job_matching import score_resume_job_match
 from app.schemas.job import (
     EligibilityVerificationRequest,
     JobCreate,
     JobRead,
     JobSearchResult,
+    ResumeJobMatchResult,
 )
 from app.services.job_ingestion import (
     ingest_himalayas_jobs,
@@ -267,6 +272,64 @@ def verify_job_eligibility(
     db.commit()
     db.refresh(job)
     return job
+
+
+@router.get("/matches", response_model=ResumeJobMatchResult)
+def match_jobs_to_resume(
+    user_id: CurrentUser,
+    resume_id: int = Query(..., ge=1),
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=20, ge=1, le=100),
+    db: Session = Depends(get_db),
+):
+    """Rank stored jobs by text overlap with the authenticated user's resume."""
+    # Resolve the resume using both its ID and the authenticated owner.
+    resume = resumes_api._owned_resume(resume_id, user_id, db)
+    storage_dir = resumes_api.STORAGE_DIR.resolve()
+    stored_path = (storage_dir / resume.storage_key).resolve()
+
+    if stored_path.parent != storage_dir or not stored_path.is_file():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Resume file not found",
+        )
+
+    resume_text = extract_resume_text(
+        stored_path,
+        resume.original_filename,
+    )
+
+    jobs = db.scalars(select(Job)).all()
+    matches = []
+
+    for job in jobs:
+        match = score_resume_job_match(
+            resume_text,
+            title=job.title,
+            description=job.description,
+            employment_type=job.employment_type,
+        )
+        job_data = JobRead.model_validate(job).model_dump()
+        matches.append({**job_data, **match})
+
+    # Rank the full result set before applying pagination.
+    matches.sort(
+        key=lambda item: (
+            item["match_score"],
+            item["created_at"],
+            item["id"],
+        ),
+        reverse=True,
+    )
+
+    return {
+        "resume_id": resume.id,
+        "resume_filename": resume.original_filename,
+        "items": matches[skip : skip + limit],
+        "total": len(matches),
+        "skip": skip,
+        "limit": limit,
+    }
 
 
 @router.get("/{job_id}", response_model=JobRead)
