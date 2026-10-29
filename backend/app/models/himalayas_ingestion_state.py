@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, Integer, String, Text, func
+from sqlalchemy import DateTime, Integer, String, Text, func, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.session import Base
@@ -13,16 +13,16 @@ class HimalayasIngestionState(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     cursor: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(
-        String(20), nullable=False, default="running"
+        String(20), nullable=False, default="running", server_default=text("'running'")
     )
 
     pages_fetched: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=0
+        Integer, nullable=False, default=0, server_default=text('0')
     )
-    fetched: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    inserted: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    updated: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    expired: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    fetched: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text('0'))
+    inserted: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text('0'))
+    updated: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text('0'))
+    expired: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text('0'))
 
     started_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True

@@ -18,6 +18,7 @@ from app.schemas.job import (
     JobSearchResult,
     ResumeJobMatchResult,
 )
+from app.schemas.himalayas_ingestion import HimalayasBatchIngestionResult
 from app.services.job_ingestion import (
     ingest_himalayas_jobs,
     ingest_jobicy_jobs,
@@ -342,7 +343,15 @@ def get_job(job_id: int, db: Session = Depends(get_db)):
     return job
 
 
-@router.post("/ingest/himalayas/batch")
+@router.post(
+    "/ingest/himalayas/batch",
+    response_model=HimalayasBatchIngestionResult,
+    responses={
+        401: {"description": "Authentication is required."},
+        403: {"description": "Admin access is required."},
+        502: {"description": "The Himalayas API returned an invalid response or failed."},
+    },
+)
 def refresh_himalayas_batch(
     _admin_id: CurrentAdmin,
     db: Session = Depends(get_db),

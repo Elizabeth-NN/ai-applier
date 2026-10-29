@@ -370,3 +370,128 @@ def test_himalayas_ingestion_failure_does_not_change_existing_jobs(
     )
     assert unchanged.last_seen_at == original_seen_at
     assert unchanged.listing_status == "unknown"
+
+
+def test_himalayas_batch_persists_cursor_and_resumes(
+    db_session, monkeypatch
+):
+    from app.models.himalayas_ingestion_state import (
+        HimalayasIngestionState,
+    )
+
+    first = incoming_himalayas_job()
+    second = incoming_himalayas_job()
+    second["source_job_id"] = (
+        "https://himalayas.app/companies/example/jobs/second"
+    )
+
+    batches = iter([
+        {
+            "jobs": [first],
+            "next_cursor": "cursor-two",
+            "pages_fetched": 1,
+            "complete": False,
+        },
+        {
+            "jobs": [second],
+            "next_cursor": None,
+            "pages_fetched": 1,
+            "complete": True,
+        },
+    ])
+    received_cursors = []
+
+    def fake_fetch(*, cursor=None, max_pages=5):
+        received_cursors.append(cursor)
+        return next(batches)
+
+    monkeypatch.setattr(
+        job_ingestion, "fetch_himalayas_batch", fake_fetch,
+        raising=False,
+    )
+
+    first_result = job_ingestion.ingest_himalayas_batch(db_session)
+    second_result = job_ingestion.ingest_himalayas_batch(db_session)
+
+    state = db_session.get(HimalayasIngestionState, 1)
+
+    assert received_cursors == [None, "cursor-two"]
+    assert first_result["status"] == "running"
+    assert first_result["completed"] is False
+    assert second_result["status"] == "completed"
+    assert second_result["completed"] is True
+    assert second_result["fetched"] == 2
+    assert second_result["inserted"] == 2
+    assert state.cursor is None
+    assert state.pages_fetched == 2
+
+
+def test_himalayas_batch_failure_does_not_advance_saved_cursor(
+    db_session, monkeypatch
+):
+    from app.models.himalayas_ingestion_state import (
+        HimalayasIngestionState,
+    )
+    from app.services.himalayas_adapter import HimalayasAPIError
+
+    monkeypatch.setattr(
+        job_ingestion,
+        "fetch_himalayas_batch",
+        lambda **_kwargs: {
+            "jobs": [],
+            "next_cursor": "saved-cursor",
+            "pages_fetched": 1,
+            "complete": False,
+        },
+        raising=False,
+    )
+    job_ingestion.ingest_himalayas_batch(db_session)
+
+    before = db_session.get(HimalayasIngestionState, 1)
+    assert before.cursor == "saved-cursor"
+    assert before.pages_fetched == 1
+
+    def fail_fetch(**_kwargs):
+        raise HimalayasAPIError("Simulated upstream failure")
+
+    monkeypatch.setattr(
+        job_ingestion, "fetch_himalayas_batch", fail_fetch,
+        raising=False,
+    )
+
+    with pytest.raises(HimalayasAPIError):
+        job_ingestion.ingest_himalayas_batch(db_session)
+
+    db_session.expire_all()
+    after = db_session.get(HimalayasIngestionState, 1)
+
+    assert after.cursor == "saved-cursor"
+    assert after.pages_fetched == 1
+
+
+def test_partial_himalayas_batch_does_not_close_absent_jobs(
+    db_session, monkeypatch
+):
+    existing_fields = incoming_himalayas_job()
+    existing_fields["listing_status"] = "active"
+    existing = Job(**existing_fields)
+    db_session.add(existing)
+    db_session.commit()
+
+    monkeypatch.setattr(
+        job_ingestion,
+        "fetch_himalayas_batch",
+        lambda **_kwargs: {
+            "jobs": [],
+            "next_cursor": "next-page",
+            "pages_fetched": 1,
+            "complete": False,
+        },
+        raising=False,
+    )
+
+    result = job_ingestion.ingest_himalayas_batch(db_session)
+    db_session.refresh(existing)
+
+    assert result["status"] == "running"
+    assert existing.listing_status == "active"

@@ -874,3 +874,101 @@ def test_unknown_eligibility_clears_current_verification(job_context):
     assert data["eligibility_evidence"] is None
     assert data["eligibility_verified_at"] is None
     assert data["eligibility_verified_by"] is None
+
+
+def test_himalayas_batch_endpoint_returns_batch_result(
+    job_context, monkeypatch
+):
+    from app.services import job_ingestion
+
+    expected = {
+        "status": "running",
+        "pages_this_batch": 2,
+        "fetched_this_batch": 40,
+        "inserted_this_batch": 40,
+        "updated_this_batch": 0,
+        "expired_this_batch": 0,
+        "pages_fetched": 2,
+        "fetched": 40,
+        "inserted": 40,
+        "updated": 0,
+        "expired": 0,
+        "completed": False,
+    }
+    calls = {}
+
+    def fake_ingest(db, *, max_pages=5):
+        calls["max_pages"] = max_pages
+        return expected
+
+    monkeypatch.setattr(
+        job_ingestion, "ingest_himalayas_batch", fake_ingest
+    )
+
+    response = job_context.post(
+        "/api/jobs/ingest/himalayas/batch?max_pages=2"
+    )
+
+    assert response.status_code == 200
+    assert response.json() == expected
+    assert calls["max_pages"] == 2
+
+
+def test_himalayas_batch_endpoint_maps_upstream_error_to_502(
+    job_context, monkeypatch
+):
+    from app.services import job_ingestion
+    from app.services.himalayas_adapter import HimalayasAPIError
+
+    def fail_ingestion(db, *, max_pages=5):
+        raise HimalayasAPIError("Upstream feed unavailable")
+
+    monkeypatch.setattr(
+        job_ingestion, "ingest_himalayas_batch", fail_ingestion
+    )
+
+    response = job_context.post("/api/jobs/ingest/himalayas/batch")
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == (
+        "Himalayas could not provide a valid batch."
+    )
+
+
+@pytest.mark.parametrize("max_pages", [0, 26, -1])
+def test_himalayas_batch_endpoint_rejects_invalid_page_limits(
+    job_context, max_pages
+):
+    response = job_context.post(
+        "/api/jobs/ingest/himalayas/batch",
+        params={"max_pages": max_pages},
+    )
+
+    assert response.status_code == 422
+
+
+def test_himalayas_batch_endpoint_requires_admin(
+    job_context, monkeypatch
+):
+    from app.services import job_ingestion
+
+    def fail_if_called(*args, **kwargs):
+        pytest.fail("Batch ingestion must not run for a non-admin")
+
+    monkeypatch.setattr(
+        job_ingestion, "ingest_himalayas_batch", fail_if_called
+    )
+
+    def reject_admin():
+        raise HTTPException(
+            status_code=403, detail="Admin access required"
+        )
+
+    from app.core.auth import require_admin
+
+    app.dependency_overrides[require_admin] = reject_admin
+
+    response = job_context.post("/api/jobs/ingest/himalayas/batch")
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Admin access required"

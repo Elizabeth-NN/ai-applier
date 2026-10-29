@@ -195,3 +195,68 @@ def test_fetch_himalayas_jobs_rejects_invalid_max_pages():
 
 def test_adapter_uses_documented_public_endpoint():
     assert HIMALAYAS_API_URL == "https://himalayas.app/jobs/api"
+
+
+def test_fetch_himalayas_batch_returns_cursor_when_page_limit_reached():
+    from app.services.himalayas_adapter import fetch_himalayas_batch
+
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        page = len(requests)
+        return httpx.Response(
+            200,
+            json={
+                "jobs": [
+                    sample_job(
+                        f"https://himalayas.app/companies/example/jobs/{page}"
+                    )
+                ],
+                "nextCursor": f"cursor-{page + 1}",
+            },
+        )
+
+    with make_client(handler) as client:
+        result = fetch_himalayas_batch(max_pages=2, client=client)
+
+    assert result["pages_fetched"] == 2
+    assert len(result["jobs"]) == 2
+    assert result["next_cursor"] == "cursor-3"
+    assert result["complete"] is False
+    assert requests[1].url.params["cursor"] == "cursor-2"
+
+
+def test_fetch_himalayas_batch_resumes_from_given_cursor():
+    from app.services.himalayas_adapter import fetch_himalayas_batch
+
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "jobs": [],
+                "nextCursor": None,
+            },
+        )
+
+    with make_client(handler) as client:
+        result = fetch_himalayas_batch(
+            cursor="saved-cursor",
+            max_pages=1,
+            client=client,
+        )
+
+    assert requests[0].url.params["cursor"] == "saved-cursor"
+    assert result["complete"] is True
+    assert result["next_cursor"] is None
+
+
+@pytest.mark.parametrize("max_pages", [0, -1, 26])
+def test_fetch_himalayas_batch_rejects_out_of_range_page_limit(max_pages):
+    from app.services.himalayas_adapter import fetch_himalayas_batch
+
+    with pytest.raises(ValueError):
+        fetch_himalayas_batch(max_pages=max_pages)

@@ -17,7 +17,10 @@ def upgrade() -> None:
         "himalayas_ingestion_state",
         sa.Column("id", sa.Integer(), primary_key=True),
         sa.Column("cursor", sa.Text(), nullable=True),
-        sa.Column("status", sa.String(length=20), nullable=False),
+        sa.Column(
+            "status", sa.String(length=20), nullable=False,
+            server_default=sa.text("'running'"),
+        ),
         sa.Column(
             "pages_fetched",
             sa.Integer(),

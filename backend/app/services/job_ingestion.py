@@ -2,11 +2,14 @@
 
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app.models.job import Job
-from app.services.himalayas_adapter import fetch_himalayas_jobs
+from app.services.himalayas_adapter import (
+    fetch_himalayas_batch,
+    fetch_himalayas_jobs,
+)
 from app.services.jobicy_adapter import fetch_jobicy_jobs
 
 
@@ -145,12 +148,9 @@ def ingest_himalayas_batch(
     max_pages: int = 5,
 ) -> dict:
     """Import a bounded Himalayas batch and persist resumable progress."""
-    from sqlalchemy import update
-
     from app.models.himalayas_ingestion_state import (
         HimalayasIngestionState,
     )
-    from app.services.himalayas_adapter import fetch_himalayas_batch
 
     if not 1 <= max_pages <= 25:
         raise ValueError("max_pages must be between 1 and 25")
@@ -162,7 +162,7 @@ def ingest_himalayas_batch(
         # PostgreSQL's conflict handling makes initialization safe when
         # two administrators start at nearly the same time.
         db.execute(
-            __import__("sqlalchemy").text(
+            text(
                 """
                 INSERT INTO himalayas_ingestion_state (id, status)
                 VALUES (1, 'running')
