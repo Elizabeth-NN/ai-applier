@@ -969,21 +969,51 @@ export default function DashboardPage() {
         throw new Error("Your session has expired. Please sign in again.");
       }
 
-      const result = await apiRequest<{
-        fetched: number;
-        inserted: number;
-        updated: number;
-        expired: number;
-      }>("/api/jobs/ingest/himalayas", token, {
-        method: "POST",
-      });
+      let completed = false;
+      let batches = 0;
+      let pagesFetched = 0;
+      let fetched = 0;
+      let inserted = 0;
+      let updated = 0;
+      let expired = 0;
+
+      while (!completed) {
+        const result = await apiRequest<{
+          status: "running" | "completed";
+          pages_this_batch: number;
+          fetched_this_batch: number;
+          inserted_this_batch: number;
+          updated_this_batch: number;
+          expired_this_batch: number;
+          pages_fetched: number;
+          fetched: number;
+          inserted: number;
+          updated: number;
+          expired: number;
+          completed: boolean;
+        }>("/api/jobs/ingest/himalayas/batch?max_pages=5", token, {
+          method: "POST",
+        });
+
+        batches += 1;
+        pagesFetched += result.pages_this_batch;
+        fetched += result.fetched_this_batch;
+        inserted += result.inserted_this_batch;
+        updated += result.updated_this_batch;
+        expired += result.expired_this_batch;
+        completed = result.completed;
+
+        setNotice(
+          `Himalayas import in progress: ${fetched} fetched across ` +
+          `${batches} batches (${pagesFetched} pages).`,
+        );
+      }
 
       setJobPage(1);
       setJobsRefreshKey((current) => current + 1);
       setNotice(
-        `Himalayas import complete: ${result.fetched} fetched, ` +
-        `${result.inserted} inserted, ${result.updated} updated, ` +
-        `${result.expired} expired.`,
+        `Himalayas import complete: ${fetched} fetched, ` +
+        `${inserted} inserted, ${updated} updated, ${expired} expired.`,
       );
     } catch (err) {
       setError(
