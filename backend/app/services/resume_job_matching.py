@@ -42,25 +42,50 @@ def _tokens(text: str) -> list[str]:
 
 
 def _features(text: str) -> Counter[str]:
-    """Build unigram, bigram, and trigram features from a document."""
-    tokens = _tokens(text)
+    """Build unigram, bigram, and trigram features without crossing sentences."""
     features: Counter[str] = Counter()
 
-    for size in (1, 2, 3):
-        for start in range(len(tokens) - size + 1):
-            phrase = tokens[start : start + size]
-            features[" ".join(phrase)] += 1
+    # Sentence boundaries prevent accidental phrases such as
+    # "FastAPI Build" when separate sentences are concatenated.
+    for segment in re.split(r"[.!?;\n]+", text):
+        tokens = _tokens(segment)
+
+        for size in (1, 2, 3):
+            for start in range(len(tokens) - size + 1):
+                phrase = tokens[start : start + size]
+                features[" ".join(phrase)] += 1
 
     return features
 
 
+REQUIREMENT_MARKER_RE = re.compile(
+    r"\b(?:required|mandatory|essential|must|required qualifications|"
+    r"minimum qualifications|must have|need to have)\b",
+    re.IGNORECASE,
+)
+
+
+def _requirement_features(text: str) -> set[str]:
+    """Extract features from sentences explicitly marked as requirements."""
+    required: set[str] = set()
+
+    for segment in re.split(r"[.!?;\n]+", text):
+        if REQUIREMENT_MARKER_RE.search(segment):
+            required.update(_features(segment))
+
+    return required
+
+
 def _feature_weights(features: Counter[str]) -> dict[str, float]:
-    """Give longer, repeated terms more weight without a skills catalogue."""
-    weights = {}
-    for phrase, count in features.items():
-        word_count = len(phrase.split())
-        weights[phrase] = (1.0 + math.log(count)) * word_count
-    return weights
+    """Weight features by phrase length, independent of repetition frequency."""
+    return {
+        phrase: float(len(phrase.split()))
+        for phrase in features
+    }
+
+def prepare_resume_features(resume_text: str) -> frozenset[str]:
+    """Extract resume features once for reuse across multiple job scores."""
+    return frozenset(_features(resume_text))
 
 
 def score_resume_job_match(
@@ -69,20 +94,39 @@ def score_resume_job_match(
     title: str,
     description: str | None,
     employment_type: str | None = None,
+    prepared_resume_features: frozenset[str] | None = None,
 ) -> dict:
-    """Compare resume text with a job and explain the textual overlap.
+    """Rank job relevance using resume evidence and weighted job fields.
 
-    The score measures weighted text-feature coverage, not hiring probability,
-    verified skill proficiency, or eligibility to work from a country.
+    This score measures textual relevance, not hiring probability,
+    verified proficiency, or eligibility to work in a country.
     """
-    job_text = " ".join(
-        part for part in (title, description or "", employment_type or "") if part
+    resume_features = (
+        prepared_resume_features
+        if prepared_resume_features is not None
+        else frozenset(_features(resume_text))
     )
+    title_features = _features(title or "")
+    description_features = _features(description or "")
+    requirement_features = _requirement_features(description or "")
+    employment_features = _features(employment_type or "")
 
-    resume_features = _features(resume_text)
-    job_features = _features(job_text)
+    # Weight job titles most heavily, descriptions next, and
+    # employment type least. Keep the calculation deterministic.
+    weights: dict[str, float] = {}
 
-    if not job_features:
+    for feature, weight in _feature_weights(title_features).items():
+        weights[feature] = weights.get(feature, 0.0) + 3.0 * weight
+
+    for feature, weight in _feature_weights(description_features).items():
+        # Explicitly marked requirements carry more weight than incidental wording.
+        multiplier = 5.0 if feature in requirement_features else 1.0
+        weights[feature] = weights.get(feature, 0.0) + multiplier * weight
+
+    for feature, weight in _feature_weights(employment_features).items():
+        weights[feature] = weights.get(feature, 0.0) + 0.5 * weight
+
+    if not weights:
         return {
             "match_score": 0,
             "matched_terms": [],
@@ -92,27 +136,44 @@ def score_resume_job_match(
             ],
         }
 
-    job_weights = _feature_weights(job_features)
-    resume_terms = set(resume_features)
-
-    # Rank terms by their contribution to the job text. Keep the output
-    # concise while calculating coverage across every extracted feature.
     matched = sorted(
-        (term for term in job_features if term in resume_terms),
-        key=lambda term: (-job_weights[term], term),
+        (term for term in weights if term in resume_features),
+        key=lambda term: (-weights[term], term),
     )
     unmatched = sorted(
-        (term for term in job_features if term not in resume_terms),
-        key=lambda term: (-job_weights[term], term),
+        (term for term in weights if term not in resume_features),
+        key=lambda term: (-weights[term], term),
     )
 
-    total_weight = sum(job_weights.values())
-    matched_weight = sum(job_weights[term] for term in matched)
-    score = round(100 * matched_weight / total_weight) if total_weight else 0
+    total_weight = sum(weights.values())
+    matched_weight = sum(weights[term] for term in matched)
+    base_score = (
+        round(100 * matched_weight / total_weight)
+        if total_weight
+        else 0
+    )
+
+    requirement_coverage = None
+    if requirement_features:
+        requirement_coverage = round(
+            100
+            * len(requirement_features.intersection(resume_features))
+            / len(requirement_features)
+        )
+        # Explicit requirements and general relevance each contribute half.
+        score = round(0.5 * base_score + 0.5 * requirement_coverage)
+    else:
+        score = base_score
 
     reasons = [
-        f"{len(matched)} of {len(job_features)} extracted text features also appear in the resume."
+        f"{len(matched)} of {len(weights)} extracted text features also appear "
+        "in the resume; job-title features receive additional weight."
     ]
+    if requirement_coverage is not None:
+        reasons.append(
+            "Explicit requirement feature coverage: "
+            f"{requirement_coverage}%."
+        )
     if not matched:
         reasons.append(
             "No informative text features overlapped; review the documents manually."

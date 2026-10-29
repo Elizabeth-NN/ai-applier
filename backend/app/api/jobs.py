@@ -10,7 +10,10 @@ from app.api import resumes as resumes_api
 from app.db.dependencies import get_db
 from app.models.job import Job
 from app.services.resume_text import extract_resume_text
-from app.services.resume_job_matching import score_resume_job_match
+from app.services.resume_job_matching import (
+    prepare_resume_features,
+    score_resume_job_match,
+)
 from app.schemas.job import (
     EligibilityVerificationRequest,
     JobCreate,
@@ -300,6 +303,7 @@ def match_jobs_to_resume(
         resume.original_filename,
     )
 
+    prepared_resume_features = prepare_resume_features(resume_text)
     jobs = db.scalars(select(Job)).all()
     matches = []
 
@@ -309,6 +313,7 @@ def match_jobs_to_resume(
             title=job.title,
             description=job.description,
             employment_type=job.employment_type,
+            prepared_resume_features=prepared_resume_features,
         )
         job_data = JobRead.model_validate(job).model_dump()
         matches.append({**job_data, **match})
