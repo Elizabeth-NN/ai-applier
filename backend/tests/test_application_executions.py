@@ -561,3 +561,138 @@ def test_cannot_fail_submission_before_start(execution_context):
     )
 
     assert response.status_code == 409
+
+
+def test_uncertain_submission_requires_attention(execution_context):
+    execution_id = start_execution_for_test(execution_context)
+
+    response = execution_context["client"].post(
+        f"/api/application-executions/{execution_id}/needs-attention",
+        json={
+            "reason": "The confirmation page did not load after submission."
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "needs_attention"
+    assert body["failure_reason"] == (
+        "The confirmation page did not load after submission."
+    )
+    assert body["submission_attempt_id"] is not None
+    assert body["submitted_at"] is None
+
+    with execution_context["db_factory"]() as db:
+        application = db.get(
+            Application,
+            execution_context["application_id"],
+        )
+        assert application.status == "saved"
+        assert application.applied_at is None
+
+
+def test_attention_reason_cannot_be_blank(execution_context):
+    execution_id = start_execution_for_test(execution_context)
+
+    response = execution_context["client"].post(
+        f"/api/application-executions/{execution_id}/needs-attention",
+        json={"reason": "   "},
+    )
+
+    assert response.status_code == 422
+
+
+def test_attention_cannot_be_recorded_twice(execution_context):
+    execution_id = start_execution_for_test(execution_context)
+    url = (
+        f"/api/application-executions/{execution_id}/needs-attention"
+    )
+
+    first = execution_context["client"].post(
+        url,
+        json={"reason": "Confirmation is uncertain."},
+    )
+    second = execution_context["client"].post(
+        url,
+        json={"reason": "Still uncertain."},
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 409
+
+
+def test_another_user_cannot_flag_submission_for_attention(
+    execution_context,
+):
+    execution_id = start_execution_for_test(execution_context)
+    execution_context["current_user"]["id"] = "user_test_2"
+
+    response = execution_context["client"].post(
+        f"/api/application-executions/{execution_id}/needs-attention",
+        json={"reason": "Confirmation is uncertain."},
+    )
+
+    assert response.status_code == 404
+
+
+def test_attention_cannot_be_recorded_before_submission_starts(
+    execution_context,
+):
+    execution_id = approve_execution_for_test(execution_context)
+
+    response = execution_context["client"].post(
+        f"/api/application-executions/{execution_id}/needs-attention",
+        json={"reason": "Confirmation is uncertain."},
+    )
+
+    assert response.status_code == 409
+
+
+def test_attention_execution_cannot_be_restarted(execution_context):
+    execution_id = start_execution_for_test(execution_context)
+    client = execution_context["client"]
+
+    attention = client.post(
+        f"/api/application-executions/{execution_id}/needs-attention",
+        json={"reason": "Confirmation is uncertain."},
+    )
+    restart = client.post(
+        f"/api/application-executions/{execution_id}/start"
+    )
+
+    assert attention.status_code == 200
+    assert restart.status_code == 409
+
+
+def test_attention_execution_cannot_be_completed(execution_context):
+    execution_id = start_execution_for_test(execution_context)
+    client = execution_context["client"]
+
+    client.post(
+        f"/api/application-executions/{execution_id}/needs-attention",
+        json={"reason": "Confirmation is uncertain."},
+    )
+
+    response = client.post(
+        f"/api/application-executions/{execution_id}/complete",
+        json={},
+    )
+
+    assert response.status_code == 409
+
+
+def test_attention_execution_cannot_be_marked_failed(execution_context):
+    execution_id = start_execution_for_test(execution_context)
+    client = execution_context["client"]
+
+    client.post(
+        f"/api/application-executions/{execution_id}/needs-attention",
+        json={"reason": "Confirmation is uncertain."},
+    )
+
+    response = client.post(
+        f"/api/application-executions/{execution_id}/fail",
+        json={"failure_reason": "Submission failed."},
+    )
+
+    assert response.status_code == 409

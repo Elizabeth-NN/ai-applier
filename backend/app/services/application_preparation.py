@@ -587,3 +587,60 @@ def fail_application_submission(
     db.refresh(execution)
 
     return execution
+
+
+def flag_application_submission_for_attention(
+    db: Session,
+    *,
+    user_id: str,
+    execution_id: int,
+    reason: str,
+) -> ApplicationExecution:
+    """Record an uncertain submission outcome requiring human review."""
+    execution = db.scalar(
+        select(ApplicationExecution).where(
+            ApplicationExecution.id == execution_id,
+            ApplicationExecution.user_id == user_id,
+        )
+    )
+
+    if execution is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Application execution not found.",
+        )
+
+    if (
+        execution.status != "submitting"
+        or execution.submission_attempt_id is None
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="Only an active submission attempt can require attention.",
+        )
+
+    result = db.execute(
+        update(ApplicationExecution)
+        .where(
+            ApplicationExecution.id == execution_id,
+            ApplicationExecution.user_id == user_id,
+            ApplicationExecution.status == "submitting",
+            ApplicationExecution.submission_attempt_id.is_not(None),
+        )
+        .values(
+            status="needs_attention",
+            failure_reason=reason,
+        )
+    )
+
+    if result.rowcount != 1:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="This submission attempt has already ended or changed.",
+        )
+
+    db.commit()
+    db.refresh(execution)
+
+    return execution

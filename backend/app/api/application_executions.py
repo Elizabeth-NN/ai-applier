@@ -7,6 +7,7 @@ from app.core.auth import CurrentUser
 from app.db.dependencies import get_db
 from app.schemas.application_execution import (
     ApplicationExecutionComplete,
+    ApplicationExecutionAttention,
     ApplicationExecutionFail,
     ApplicationExecutionPrepare,
     ApplicationExecutionRead,
@@ -14,6 +15,7 @@ from app.schemas.application_execution import (
 from app.services.application_preparation import (
     approve_application_execution,
     complete_application_submission,
+    flag_application_submission_for_attention,
     fail_application_submission,
     prepare_application_execution,
     review_application_execution,
@@ -141,4 +143,24 @@ def fail_execution(
         user_id=user_id,
         execution_id=execution_id,
         failure_reason=payload.failure_reason,
+    )
+
+
+
+@router.post(
+    "/{execution_id}/needs-attention",
+    response_model=ApplicationExecutionRead,
+)
+def attention_execution(
+    execution_id: int,
+    payload: ApplicationExecutionAttention,
+    user_id: CurrentUser,
+    db: Session = Depends(get_db),
+):
+    """Flag an uncertain submission outcome for human investigation."""
+    return flag_application_submission_for_attention(
+        db,
+        user_id=user_id,
+        execution_id=execution_id,
+        reason=payload.reason,
     )
