@@ -123,6 +123,27 @@ class ApplicationExecution(Base):
         nullable=True,
     )
 
+    # Submission attempt audit information.
+    submission_attempt_id: Mapped[str | None] = mapped_column(
+        String(36),
+        nullable=True,
+    )
+
+    submission_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    submission_reference: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+    )
+
+    submission_result: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON,
+        nullable=True,
+    )
+
     failure_reason: Mapped[str | None] = mapped_column(
         Text,
         nullable=True,

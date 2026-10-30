@@ -10,7 +10,9 @@ from app.schemas.application_execution import (
     ApplicationExecutionRead,
 )
 from app.services.application_preparation import (
+    approve_application_execution,
     prepare_application_execution,
+    review_application_execution,
 )
 
 
@@ -45,3 +47,38 @@ def prepare_execution(
         batch_item_id=payload.batch_item_id,
         idempotency_key=idempotency_key,
     )
+
+
+@router.post(
+    "/{execution_id}/review",
+    response_model=ApplicationExecutionRead,
+)
+def review_execution(
+    execution_id: int,
+    user_id: CurrentUser,
+    db: Session = Depends(get_db),
+):
+    """Record that the authenticated user reviewed the prepared payload."""
+    return review_application_execution(
+        db,
+        user_id=user_id,
+        execution_id=execution_id,
+    )
+
+
+@router.post(
+    "/{execution_id}/approve",
+    response_model=ApplicationExecutionRead,
+)
+def approve_execution(
+    execution_id: int,
+    user_id: CurrentUser,
+    db: Session = Depends(get_db),
+):
+    """Explicitly approve a previously reviewed application execution."""
+    return approve_application_execution(
+        db,
+        user_id=user_id,
+        execution_id=execution_id,
+    )
+

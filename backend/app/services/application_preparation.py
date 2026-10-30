@@ -4,9 +4,10 @@ import hashlib
 import os
 from pathlib import Path
 from urllib.parse import urlsplit
+from datetime import datetime, timezone
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -287,3 +288,97 @@ def prepare_application_execution(
         if existing is not None:
             return existing
         raise
+
+
+def review_application_execution(
+    db: Session,
+    *,
+    user_id: str,
+    execution_id: int,
+) -> ApplicationExecution:
+    """Record that the owner has reviewed the prepared application."""
+    execution = db.scalar(
+        select(ApplicationExecution).where(
+            ApplicationExecution.id == execution_id,
+            ApplicationExecution.user_id == user_id,
+        )
+    )
+
+    if execution is None:
+        raise HTTPException(status_code=404, detail="Application execution not found.")
+
+    if execution.status != "prepared":
+        raise HTTPException(
+            status_code=409,
+            detail="Only prepared executions can be reviewed.",
+        )
+
+    if execution.reviewed_at is None:
+        execution.reviewed_at = datetime.now(timezone.utc)
+        db.commit()
+        db.refresh(execution)
+
+    return execution
+
+
+def approve_application_execution(
+    db: Session,
+    *,
+    user_id: str,
+    execution_id: int,
+) -> ApplicationExecution:
+    """Atomically approve a reviewed execution."""
+    execution = db.scalar(
+        select(ApplicationExecution).where(
+            ApplicationExecution.id == execution_id,
+            ApplicationExecution.user_id == user_id,
+        )
+    )
+
+    if execution is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Application execution not found.",
+        )
+
+    if execution.status != "prepared":
+        raise HTTPException(
+            status_code=409,
+            detail="Only prepared executions can be approved.",
+        )
+
+    if execution.reviewed_at is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Review the application execution before approving it.",
+        )
+
+    approved_at = datetime.now(timezone.utc)
+
+    # The conditions are checked again by the database during the update.
+    # This prevents two concurrent requests from approving the same execution.
+    result = db.execute(
+        update(ApplicationExecution)
+        .where(
+            ApplicationExecution.id == execution_id,
+            ApplicationExecution.user_id == user_id,
+            ApplicationExecution.status == "prepared",
+            ApplicationExecution.reviewed_at.is_not(None),
+        )
+        .values(
+            status="approved",
+            approved_at=approved_at,
+        )
+    )
+
+    if result.rowcount != 1:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="This execution has already been approved or changed.",
+        )
+
+    db.commit()
+    db.refresh(execution)
+
+    return execution

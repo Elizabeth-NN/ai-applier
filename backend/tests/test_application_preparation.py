@@ -212,3 +212,167 @@ def test_rejects_resume_with_mismatched_recorded_size(preparation_context):
         prepare(preparation_context)
 
     assert exc.value.status_code == 422
+
+
+def test_cannot_approve_execution_before_review(preparation_context):
+    execution = prepare(preparation_context)
+
+    with preparation_context["factory"]() as db:
+        with pytest.raises(HTTPException) as exc:
+            preparation.approve_application_execution(
+                db,
+                user_id="user_test_1",
+                execution_id=execution.id,
+            )
+
+    assert exc.value.status_code == 409
+
+
+def test_review_records_reviewed_at(preparation_context):
+    execution = prepare(preparation_context)
+
+    with preparation_context["factory"]() as db:
+        reviewed = preparation.review_application_execution(
+            db,
+            user_id="user_test_1",
+            execution_id=execution.id,
+        )
+
+    assert reviewed.status == "prepared"
+    assert reviewed.reviewed_at is not None
+    assert reviewed.approved_at is None
+    assert reviewed.submitted_at is None
+
+
+def test_review_is_idempotent(preparation_context):
+    execution = prepare(preparation_context)
+
+    with preparation_context["factory"]() as db:
+        first = preparation.review_application_execution(
+            db,
+            user_id="user_test_1",
+            execution_id=execution.id,
+        )
+        first_reviewed_at = first.reviewed_at
+
+    with preparation_context["factory"]() as db:
+        second = preparation.review_application_execution(
+            db,
+            user_id="user_test_1",
+            execution_id=execution.id,
+        )
+
+    assert second.reviewed_at == first_reviewed_at
+
+
+def test_another_user_cannot_review_execution(preparation_context):
+    execution = prepare(preparation_context)
+
+    with preparation_context["factory"]() as db:
+        with pytest.raises(HTTPException) as exc:
+            preparation.review_application_execution(
+                db,
+                user_id="different_user",
+                execution_id=execution.id,
+            )
+
+    assert exc.value.status_code == 404
+
+
+def test_another_user_cannot_approve_execution(preparation_context):
+    execution = prepare(preparation_context)
+
+    with preparation_context["factory"]() as db:
+        preparation.review_application_execution(
+            db,
+            user_id="user_test_1",
+            execution_id=execution.id,
+        )
+
+    with preparation_context["factory"]() as db:
+        with pytest.raises(HTTPException) as exc:
+            preparation.approve_application_execution(
+                db,
+                user_id="different_user",
+                execution_id=execution.id,
+            )
+
+    assert exc.value.status_code == 404
+
+
+def test_approval_requires_review_and_records_approval(preparation_context):
+    execution = prepare(preparation_context)
+
+    with preparation_context["factory"]() as db:
+        preparation.review_application_execution(
+            db,
+            user_id="user_test_1",
+            execution_id=execution.id,
+        )
+
+    with preparation_context["factory"]() as db:
+        approved = preparation.approve_application_execution(
+            db,
+            user_id="user_test_1",
+            execution_id=execution.id,
+        )
+
+    assert approved.status == "approved"
+    assert approved.reviewed_at is not None
+    assert approved.approved_at is not None
+    assert approved.submitted_at is None
+
+
+def test_cannot_approve_execution_twice(preparation_context):
+    execution = prepare(preparation_context)
+
+    with preparation_context["factory"]() as db:
+        preparation.review_application_execution(
+            db,
+            user_id="user_test_1",
+            execution_id=execution.id,
+        )
+
+    with preparation_context["factory"]() as db:
+        preparation.approve_application_execution(
+            db,
+            user_id="user_test_1",
+            execution_id=execution.id,
+        )
+
+    with preparation_context["factory"]() as db:
+        with pytest.raises(HTTPException) as exc:
+            preparation.approve_application_execution(
+                db,
+                user_id="user_test_1",
+                execution_id=execution.id,
+            )
+
+    assert exc.value.status_code == 409
+
+
+def test_cannot_review_execution_after_approval(preparation_context):
+    execution = prepare(preparation_context)
+
+    with preparation_context["factory"]() as db:
+        preparation.review_application_execution(
+            db,
+            user_id="user_test_1",
+            execution_id=execution.id,
+        )
+        preparation.approve_application_execution(
+            db,
+            user_id="user_test_1",
+            execution_id=execution.id,
+        )
+
+    with preparation_context["factory"]() as db:
+        with pytest.raises(HTTPException) as exc:
+            preparation.review_application_execution(
+                db,
+                user_id="user_test_1",
+                execution_id=execution.id,
+            )
+
+    assert exc.value.status_code == 409
+
