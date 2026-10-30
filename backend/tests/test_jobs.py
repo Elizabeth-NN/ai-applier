@@ -972,3 +972,104 @@ def test_himalayas_batch_endpoint_requires_admin(
 
     assert response.status_code == 403
     assert response.json()["detail"] == "Admin access required"
+
+@pytest.mark.parametrize(
+    "endpoint,ingestion_name,changed_result,unchanged_result",
+    [
+        (
+            "/api/jobs/ingest/jobicy",
+            "ingest_jobicy_jobs",
+            {"fetched": 1, "inserted": 1, "updated": 0},
+            {"fetched": 1, "inserted": 0, "updated": 0},
+        ),
+        (
+            "/api/jobs/ingest/himalayas",
+            "ingest_himalayas_jobs",
+            {"fetched": 1, "inserted": 0, "updated": 1},
+            {"fetched": 1, "inserted": 0, "updated": 0},
+        ),
+        (
+            "/api/jobs/ingest/himalayas/batch",
+            "ingest_himalayas_batch",
+            {
+                "status": "running",
+                "pages_this_batch": 1,
+                "fetched_this_batch": 1,
+                "inserted_this_batch": 1,
+                "updated_this_batch": 0,
+                "expired_this_batch": 0,
+                "pages_fetched": 3,
+                "fetched": 100,
+                "inserted": 50,
+                "updated": 40,
+                "expired": 10,
+                "completed": False,
+            },
+            {
+                "status": "running",
+                "pages_this_batch": 1,
+                "fetched_this_batch": 1,
+                "inserted_this_batch": 0,
+                "updated_this_batch": 0,
+                "expired_this_batch": 1,
+                "pages_fetched": 3,
+                "fetched": 100,
+                "inserted": 50,
+                "updated": 40,
+                "expired": 10,
+                "completed": False,
+            },
+        ),
+    ],
+)
+@pytest.mark.parametrize(
+    "result_name",
+    ["changed_result", "unchanged_result"],
+)
+def test_ingestion_invalidates_matching_cache_only_when_jobs_change(
+    job_context,
+    monkeypatch,
+    endpoint,
+    ingestion_name,
+    changed_result,
+    unchanged_result,
+    result_name,
+):
+    from app.api import jobs as jobs_api
+    from app.services import job_ingestion
+
+    result = (
+        changed_result
+        if result_name == "changed_result"
+        else unchanged_result
+    )
+
+    invalidations = []
+
+    monkeypatch.setattr(
+        jobs_api,
+        "_invalidate_corpus_term_weights",
+        lambda: invalidations.append(True),
+    )
+
+    ingestion_function = (
+        job_ingestion
+        if ingestion_name == "ingest_himalayas_batch"
+        else jobs_api
+    )
+
+    def fake_ingestion(*args, **kwargs):
+        return result
+
+    monkeypatch.setattr(
+        ingestion_function,
+        ingestion_name,
+        fake_ingestion,
+    )
+
+    response = job_context.post(endpoint)
+
+    assert response.status_code == 200
+    assert len(invalidations) == (
+        1 if result_name == "changed_result" else 0
+    )

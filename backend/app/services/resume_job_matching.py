@@ -24,6 +24,7 @@ import math
 import re
 from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
+from functools import lru_cache
 
 
 STOP_WORDS = frozenset("""
@@ -228,6 +229,7 @@ def _canonical(token: str) -> str:
     return _singularize(token)
 
 
+@lru_cache(maxsize=100_000)
 def _match_key(token: str) -> str:
     """Return the internal key used to compare related word forms.
 
@@ -257,6 +259,7 @@ def _match_key(token: str) -> str:
     return key
 
 
+@lru_cache(maxsize=100_000)
 def _term_key(term: str) -> str:
     """Match key for a single term or a space-separated phrase."""
     return " ".join(_match_key(word) for word in term.split())

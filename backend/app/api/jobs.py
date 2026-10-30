@@ -72,6 +72,12 @@ def _corpus_term_weights(job_rows) -> dict[str, float]:
 
     return weights
 
+def _invalidate_corpus_term_weights() -> None:
+    """Invalidate cached weights after matching-relevant job changes."""
+    with _term_weight_lock:
+        _term_weight_cache["key"] = None
+        _term_weight_cache["expires_at"] = 0.0
+        _term_weight_cache["weights"] = {}
 
 @router.post(
     "",
@@ -227,7 +233,12 @@ def refresh_jobicy_jobs(
 ):
     """Import and refresh jobs from the public Jobicy feed."""
     try:
-        return ingest_jobicy_jobs(db)
+        result = ingest_jobicy_jobs(db)
+
+        if result["inserted"] or result["updated"]:
+            _invalidate_corpus_term_weights()
+
+        return result
     except JobicyAPIError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -242,7 +253,12 @@ def refresh_himalayas_jobs(
 ):
     """Import and refresh jobs from the public Himalayas feed."""
     try:
-        return ingest_himalayas_jobs(db)
+        result = ingest_himalayas_jobs(db)
+
+        if result["inserted"] or result["updated"]:
+            _invalidate_corpus_term_weights()
+
+        return result
     except HimalayasAPIError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -430,7 +446,12 @@ def refresh_himalayas_batch(
     from app.services.job_ingestion import ingest_himalayas_batch
 
     try:
-        return ingest_himalayas_batch(db, max_pages=max_pages)
+        result = ingest_himalayas_batch(db, max_pages=max_pages)
+
+        if result["inserted_this_batch"] or result["updated_this_batch"]:
+            _invalidate_corpus_term_weights()
+
+        return result
     except HimalayasAPIError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
