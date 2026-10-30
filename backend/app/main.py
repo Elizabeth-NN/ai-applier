@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from app.api.cover_letter_generation import router as cover_letter_generation_router
 from app.api.cover_letter_drafts import router as cover_letter_drafts_router
 from app.api.application_batches import router as application_batches_router
+from app.api.application_executions import router as application_executions_router
 from app.api.applications import router as applications_router
 from app.api.jobs import router as jobs_router
 from app.api.resumes import router as resumes_router
@@ -48,6 +49,7 @@ app.add_middleware(
 app.include_router(jobs_router)
 app.include_router(applications_router)
 app.include_router(application_batches_router)
+app.include_router(application_executions_router)
 app.include_router(cover_letter_generation_router)
 app.include_router(cover_letter_drafts_router)
 app.include_router(resumes_router)
