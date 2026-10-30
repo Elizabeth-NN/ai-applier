@@ -355,3 +355,133 @@ def test_starting_submission_does_not_mark_application_as_applied(
         )
         assert application.status == "saved"
         assert application.applied_at is None
+
+
+def start_execution_for_test(context):
+    """Prepare, review, approve, and start an execution."""
+    client = context["client"]
+    execution_id = approve_execution_for_test(context)
+
+    response = client.post(
+        f"/api/application-executions/{execution_id}/start"
+    )
+    assert response.status_code == 200
+
+    return execution_id
+
+
+def test_complete_submission_records_confirmed_success(execution_context):
+    client = execution_context["client"]
+    execution_id = start_execution_for_test(execution_context)
+
+    response = client.post(
+        f"/api/application-executions/{execution_id}/complete",
+        json={"submission_reference": "APP-2026-001"},
+    )
+
+    assert response.status_code == 200
+
+    body = response.json()
+    assert body["status"] == "submitted"
+    assert body["submitted_at"] is not None
+    assert body["submission_reference"] == "APP-2026-001"
+    assert body["submission_attempt_id"] is not None
+
+    with execution_context["db_factory"]() as db:
+        application = db.get(
+            Application,
+            execution_context["application_id"],
+        )
+        assert application.status == "applied"
+        assert application.applied_at is not None
+
+
+def test_complete_submission_allows_missing_reference(execution_context):
+    client = execution_context["client"]
+    execution_id = start_execution_for_test(execution_context)
+
+    response = client.post(
+        f"/api/application-executions/{execution_id}/complete",
+        json={},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "submitted"
+    assert response.json()["submission_reference"] is None
+
+
+def test_complete_submission_cannot_be_completed_twice(execution_context):
+    client = execution_context["client"]
+    execution_id = start_execution_for_test(execution_context)
+    url = f"/api/application-executions/{execution_id}/complete"
+
+    first = client.post(url, json={})
+    second = client.post(url, json={})
+
+    assert first.status_code == 200
+    assert second.status_code == 409
+
+    with execution_context["db_factory"]() as db:
+        execution = db.get(ApplicationExecution, execution_id)
+        assert execution.status == "submitted"
+
+
+def test_another_user_cannot_complete_submission(execution_context):
+    client = execution_context["client"]
+    execution_id = start_execution_for_test(execution_context)
+
+    execution_context["current_user"]["id"] = "user_test_2"
+
+    response = client.post(
+        f"/api/application-executions/{execution_id}/complete",
+        json={},
+    )
+
+    assert response.status_code == 404
+
+
+def test_cannot_complete_submission_before_start(execution_context):
+    client = execution_context["client"]
+    execution_id = approve_execution_for_test(execution_context)
+
+    response = client.post(
+        f"/api/application-executions/{execution_id}/complete",
+        json={},
+    )
+
+    assert response.status_code == 409
+
+
+@pytest.mark.parametrize(
+    "existing_status",
+    ["applied", "interview", "offer", "rejected"],
+)
+def test_completion_preserves_existing_application_status(
+    execution_context,
+    existing_status,
+):
+    client = execution_context["client"]
+    execution_id = start_execution_for_test(execution_context)
+
+    with execution_context["db_factory"]() as db:
+        application = db.get(
+            Application,
+            execution_context["application_id"],
+        )
+        application.status = existing_status
+        db.commit()
+
+    response = client.post(
+        f"/api/application-executions/{execution_id}/complete",
+        json={},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "submitted"
+
+    with execution_context["db_factory"]() as db:
+        application = db.get(
+            Application,
+            execution_context["application_id"],
+        )
+        assert application.status == existing_status

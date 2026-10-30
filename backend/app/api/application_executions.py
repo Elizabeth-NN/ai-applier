@@ -6,11 +6,13 @@ from sqlalchemy.orm import Session
 from app.core.auth import CurrentUser
 from app.db.dependencies import get_db
 from app.schemas.application_execution import (
+    ApplicationExecutionComplete,
     ApplicationExecutionPrepare,
     ApplicationExecutionRead,
 )
 from app.services.application_preparation import (
     approve_application_execution,
+    complete_application_submission,
     prepare_application_execution,
     review_application_execution,
     start_application_submission,
@@ -97,4 +99,24 @@ def start_execution(
         db,
         user_id=user_id,
         execution_id=execution_id,
+    )
+
+
+
+@router.post(
+    "/{execution_id}/complete",
+    response_model=ApplicationExecutionRead,
+)
+def complete_execution(
+    execution_id: int,
+    payload: ApplicationExecutionComplete,
+    user_id: CurrentUser,
+    db: Session = Depends(get_db),
+):
+    """Record a confirmed application submission."""
+    return complete_application_submission(
+        db,
+        user_id=user_id,
+        execution_id=execution_id,
+        submission_reference=payload.submission_reference,
     )
