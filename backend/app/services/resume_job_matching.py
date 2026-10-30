@@ -63,7 +63,7 @@ EXPLANATION_PHRASE_SLOTS = 5
 # Term weighting and evidence confidence.
 MIN_TERM_WEIGHT = 0.05
 MIN_EXPLANATION_WEIGHT = 0.8  # Generic terms below this are not listed.
-TITLE_FULL_CONFIDENCE_TERMS = 3
+TITLE_FULL_CONFIDENCE_TERMS = 5
 DESCRIPTION_FULL_CONFIDENCE_TERMS = 6
 REQUIREMENT_FULL_CONFIDENCE_TERMS = 3
 _UNSEEN_TERM_KEY = ""  # Weight used for terms the corpus never saw.
@@ -555,12 +555,11 @@ def score_resume_job_match(
     # Each value is scaled by how much evidence stands behind it.
     components: list[tuple[float, float]] = []
     if title_score is not None:
-        components.append((0.20, title_score * title_confidence))
+        components.append((0.45, title_score * title_confidence))
     if description_score is not None:
-        components.append((0.55, description_score * description_confidence))
+        components.append((0.30, description_score * description_confidence))
     if requirement_score is not None:
         components.append((0.25, requirement_score * requirement_confidence))
-
     if not components:
         return {
             "match_score": 0,
