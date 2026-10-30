@@ -2,6 +2,7 @@
 
 import hashlib
 import os
+import uuid
 from pathlib import Path
 from urllib.parse import urlsplit
 from datetime import datetime, timezone
@@ -377,6 +378,153 @@ def approve_application_execution(
             status_code=409,
             detail="This execution has already been approved or changed.",
         )
+
+    db.commit()
+    db.refresh(execution)
+
+    return execution
+
+
+def start_application_submission(
+    db: Session,
+    *,
+    user_id: str,
+    execution_id: int,
+) -> ApplicationExecution:
+    """Atomically claim one approved execution for a submission attempt.
+
+    This records the start of an attempt only. It does not contact the
+    employer's website or submit an application.
+    """
+    execution = db.scalar(
+        select(ApplicationExecution).where(
+            ApplicationExecution.id == execution_id,
+            ApplicationExecution.user_id == user_id,
+        )
+    )
+
+    if execution is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Application execution not found.",
+        )
+
+    if execution.status != "approved":
+        raise HTTPException(
+            status_code=409,
+            detail="Only approved executions can start a submission attempt.",
+        )
+
+    if execution.submission_attempt_id is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="A submission attempt has already been started.",
+        )
+
+    attempt_id = str(uuid.uuid4())
+    started_at = datetime.now(timezone.utc)
+
+    # Recheck the conditions inside the UPDATE to protect against
+    # concurrent requests trying to start the same execution.
+    result = db.execute(
+        update(ApplicationExecution)
+        .where(
+            ApplicationExecution.id == execution_id,
+            ApplicationExecution.user_id == user_id,
+            ApplicationExecution.status == "approved",
+            ApplicationExecution.submission_attempt_id.is_(None),
+        )
+        .values(
+            status="submitting",
+            submission_attempt_id=attempt_id,
+            submission_started_at=started_at,
+        )
+    )
+
+    if result.rowcount != 1:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="This execution has already started or changed.",
+        )
+
+    db.commit()
+    db.refresh(execution)
+
+    return execution
+
+
+def complete_application_submission(
+    db: Session,
+    *,
+    user_id: str,
+    execution_id: int,
+    submission_reference: str | None = None,
+) -> ApplicationExecution:
+    """Record a confirmed submission and update application tracking."""
+    execution = db.scalar(
+        select(ApplicationExecution).where(
+            ApplicationExecution.id == execution_id,
+            ApplicationExecution.user_id == user_id,
+        )
+    )
+
+    if execution is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Application execution not found.",
+        )
+
+    if (
+        execution.status != "submitting"
+        or execution.submission_attempt_id is None
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="Only an active submission attempt can be completed.",
+        )
+
+    submitted_at = datetime.now(timezone.utc)
+
+    # Claim the completion atomically. A second outcome request cannot
+    # complete an execution that has already changed state.
+    result = db.execute(
+        update(ApplicationExecution)
+        .where(
+            ApplicationExecution.id == execution_id,
+            ApplicationExecution.user_id == user_id,
+            ApplicationExecution.status == "submitting",
+            ApplicationExecution.submission_attempt_id.is_not(None),
+            ApplicationExecution.submitted_at.is_(None),
+        )
+        .values(
+            status="submitted",
+            submitted_at=submitted_at,
+            submission_reference=submission_reference,
+        )
+    )
+
+    if result.rowcount != 1:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="This submission attempt has already been completed or changed.",
+        )
+
+    # Only advance a saved application. Never downgrade an existing
+    # applied, interview, offer, or rejected status.
+    db.execute(
+        update(Application)
+        .where(
+            Application.id == execution.application_id,
+            Application.user_id == user_id,
+            Application.status == "saved",
+        )
+        .values(
+            status="applied",
+            applied_at=submitted_at,
+        )
+    )
 
     db.commit()
     db.refresh(execution)

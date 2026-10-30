@@ -41,7 +41,17 @@ class ApplicationExecutionRead(BaseModel):
     reviewed_at: datetime | None
     approved_at: datetime | None
     submitted_at: datetime | None
+    submission_attempt_id: str | None
+    submission_started_at: datetime | None
+    submission_reference: str | None
+    submission_result: dict[str, Any] | None
     failure_reason: str | None
 
     created_at: datetime
     updated_at: datetime
+
+class ApplicationExecutionComplete(BaseModel):
+    submission_reference: str | None = Field(
+        default=None,
+        max_length=255,
+    )

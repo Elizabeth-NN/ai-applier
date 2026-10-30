@@ -245,3 +245,113 @@ def test_execution_approval_does_not_submit_application(execution_context):
         )
         assert application.status == "saved"
         assert application.applied_at is None
+
+
+def approve_execution_for_test(context):
+    """Prepare, review, and approve an execution for lifecycle tests."""
+    client = context["client"]
+
+    prepared = prepare_execution(context)
+    assert prepared.status_code == 201
+
+    execution_id = prepared.json()["id"]
+
+    reviewed = client.post(
+        f"/api/application-executions/{execution_id}/review"
+    )
+    assert reviewed.status_code == 200
+
+    approved = client.post(
+        f"/api/application-executions/{execution_id}/approve"
+    )
+    assert approved.status_code == 200
+
+    return execution_id
+
+
+def test_start_submission_requires_approval(execution_context):
+    client = execution_context["client"]
+    prepared = prepare_execution(execution_context)
+    execution_id = prepared.json()["id"]
+
+    response = client.post(
+        f"/api/application-executions/{execution_id}/start"
+    )
+
+    assert response.status_code == 409
+
+
+def test_start_submission_records_one_attempt(execution_context):
+    client = execution_context["client"]
+    execution_id = approve_execution_for_test(execution_context)
+
+    response = client.post(
+        f"/api/application-executions/{execution_id}/start"
+    )
+
+    assert response.status_code == 200
+
+    body = response.json()
+    assert body["status"] == "submitting"
+    assert body["submission_attempt_id"] is not None
+    assert len(body["submission_attempt_id"]) == 36
+    assert body["submission_started_at"] is not None
+    assert body["submitted_at"] is None
+    assert body["submission_reference"] is None
+    assert body["submission_result"] is None
+
+
+def test_start_submission_cannot_be_started_twice(execution_context):
+    client = execution_context["client"]
+    execution_id = approve_execution_for_test(execution_context)
+
+    first = client.post(
+        f"/api/application-executions/{execution_id}/start"
+    )
+    second = client.post(
+        f"/api/application-executions/{execution_id}/start"
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 409
+
+    with execution_context["db_factory"]() as db:
+        execution = db.get(ApplicationExecution, execution_id)
+        assert execution.status == "submitting"
+        assert execution.submission_attempt_id == (
+            first.json()["submission_attempt_id"]
+        )
+
+
+def test_another_user_cannot_start_submission(execution_context):
+    client = execution_context["client"]
+    execution_id = approve_execution_for_test(execution_context)
+
+    execution_context["current_user"]["id"] = "user_test_2"
+
+    response = client.post(
+        f"/api/application-executions/{execution_id}/start"
+    )
+
+    assert response.status_code == 404
+
+
+def test_starting_submission_does_not_mark_application_as_applied(
+    execution_context,
+):
+    client = execution_context["client"]
+    execution_id = approve_execution_for_test(execution_context)
+
+    response = client.post(
+        f"/api/application-executions/{execution_id}/start"
+    )
+
+    assert response.status_code == 200
+
+    with execution_context["db_factory"]() as db:
+        application = db.get(
+            Application,
+            execution_context["application_id"],
+        )
+        assert application.status == "saved"
+        assert application.applied_at is None

@@ -13,6 +13,7 @@ from app.services.application_preparation import (
     approve_application_execution,
     prepare_application_execution,
     review_application_execution,
+    start_application_submission,
 )
 
 
@@ -82,3 +83,18 @@ def approve_execution(
         execution_id=execution_id,
     )
 
+@router.post(
+    "/{execution_id}/start",
+    response_model=ApplicationExecutionRead,
+)
+def start_execution(
+    execution_id: int,
+    user_id: CurrentUser,
+    db: Session = Depends(get_db),
+):
+    """Record the start of one approved submission attempt."""
+    return start_application_submission(
+        db,
+        user_id=user_id,
+        execution_id=execution_id,
+    )
