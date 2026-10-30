@@ -28,8 +28,9 @@ def _resume_storage_dir() -> Path:
     ).resolve()
 
 
+
 def _validate_target_url(url: str | None) -> str:
-    """Accept only absolute HTTP(S) URLs with a hostname."""
+    """Accept only absolute HTTP(S) URLs with a valid hostname and port."""
     if not url or len(url) > 2048 or any(char.isspace() for char in url):
         raise HTTPException(
             status_code=422,
@@ -38,11 +39,15 @@ def _validate_target_url(url: str | None) -> str:
 
     try:
         parsed = urlsplit(url)
+        # Accessing .port validates that the port is numeric and in range.
+        port = parsed.port
+
         valid = (
             parsed.scheme.lower() in {"http", "https"}
             and bool(parsed.hostname)
             and parsed.username is None
             and parsed.password is None
+            and (port is None or 1 <= port <= 65535)
         )
     except ValueError:
         valid = False
