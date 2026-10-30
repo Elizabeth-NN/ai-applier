@@ -175,3 +175,119 @@ def test_prepared_resume_features_preserve_match_results():
     )
 
     assert prepared == original
+
+def test_relevant_technical_role_beats_unrelated_role_with_generic_overlap():
+    resume = (
+        "Python backend developer. "
+        "Built REST APIs using FastAPI and PostgreSQL. "
+        "Used Docker to deploy web applications. "
+        "Experienced in planning, communication, analysis, and management."
+    )
+
+    backend = score_resume_job_match(
+        resume,
+        title="Junior Python Backend Developer",
+        description=(
+            "Build REST APIs using Python, FastAPI, PostgreSQL, and Docker."
+        ),
+    )
+
+    ux_research = score_resume_job_match(
+        resume,
+        title="UX/UI Researcher",
+        description=(
+            "Support research planning, data analysis, communication, "
+            "information gathering, and management of research projects."
+        ),
+    )
+
+    assert backend["match_score"] > ux_research["match_score"]
+
+
+def test_generic_filler_does_not_dominate_matched_terms():
+    result = score_resume_job_match(
+        (
+            "Python backend developer. "
+            "Built APIs using FastAPI and PostgreSQL."
+        ),
+        title="Python Backend Developer",
+        description=(
+            "Use Python, FastAPI, and PostgreSQL. "
+            "Develop basic skills and manage current information."
+        ),
+    )
+
+    generic_terms = {"basic", "current", "information", "skills"}
+
+    assert not generic_terms.intersection(result["matched_terms"])
+
+
+def test_specific_required_skills_outweigh_generic_requirement_overlap():
+    title = "Backend Developer"
+    description = (
+        "Required: Python, FastAPI, and PostgreSQL. "
+        "Must have experience building REST APIs. "
+        "Strong communication and teamwork are important."
+    )
+
+    technical_resume = (
+        "Backend developer experienced with Python, FastAPI, "
+        "PostgreSQL, and REST APIs."
+    )
+
+    generic_resume = (
+        "Backend developer with strong communication skills "
+        "and experience working in teams."
+    )
+
+    technical = score_resume_job_match(
+        technical_resume,
+        title=title,
+        description=description,
+    )
+    generic = score_resume_job_match(
+        generic_resume,
+        title=title,
+        description=description,
+    )
+
+    assert technical["match_score"] > generic["match_score"]
+
+
+def test_punctuation_does_not_create_artificial_phrases():
+    result = score_resume_job_match(
+        "Python backend developer using FastAPI and PostgreSQL.",
+        title="Junior Python Backend Developer",
+        description="Required: Python, FastAPI, PostgreSQL, and Docker.",
+    )
+
+    assert "python fastapi postgresql" not in result["matched_terms"]
+    assert "ux ui researcher" not in result["terms_not_found_in_resume"]
+    assert "docker" in result["terms_not_found_in_resume"]
+
+
+def test_all_comma_separated_required_skills_are_counted():
+    result = score_resume_job_match(
+        "Python developer using FastAPI, PostgreSQL, and Docker.",
+        title="Backend Developer",
+        description=(
+            "Required: Python, FastAPI, PostgreSQL, and Docker."
+        ),
+    )
+
+    assert "Explicit requirement term coverage: 100%." in result["match_reasons"]
+
+def test_title_overlap_does_not_dominate_weak_description_match():
+    result = score_resume_job_match(
+        (
+            "Business analyst with experience in business analysis, "
+            "data reporting, project planning, and management."
+        ),
+        title="Business Analyst",
+        description=(
+            "Design and maintain distributed systems using Kubernetes, "
+            "Terraform, Go, and cloud infrastructure."
+        ),
+    )
+
+    assert result["match_score"] < 45

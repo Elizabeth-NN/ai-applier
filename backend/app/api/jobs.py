@@ -1,3 +1,5 @@
+import threading
+import time
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -11,6 +13,7 @@ from app.db.dependencies import get_db
 from app.models.job import Job
 from app.services.resume_text import extract_resume_text
 from app.services.resume_job_matching import (
+    build_term_weights,
     prepare_resume_features,
     score_resume_job_match,
 )
@@ -33,6 +36,41 @@ from app.services.job_relevance import score_job_relevance
 
 
 router = APIRouter(prefix="/api/jobs", tags=["Jobs"])
+
+# Term weights describe how distinctive each word is across the whole job
+# corpus, so they do not depend on the resume. Building them tokenizes every
+# job description, so they are cached briefly and rebuilt when the corpus
+# changes (job count or newest job) or the cache expires.
+_TERM_WEIGHT_TTL_SECONDS = 600
+_term_weight_cache: dict = {"key": None, "expires_at": 0.0, "weights": {}}
+_term_weight_lock = threading.Lock()
+
+
+def _corpus_term_weights(job_rows) -> dict[str, float]:
+    """Return cached corpus term weights, rebuilding them when stale."""
+    corpus_key = (
+        len(job_rows),
+        max((row.created_at for row in job_rows), default=None),
+    )
+    now = time.monotonic()
+
+    with _term_weight_lock:
+        if (
+            _term_weight_cache["key"] == corpus_key
+            and now < _term_weight_cache["expires_at"]
+        ):
+            return _term_weight_cache["weights"]
+
+    weights = build_term_weights(
+        f"{row.title or ''}\n{row.description or ''}" for row in job_rows
+    )
+
+    with _term_weight_lock:
+        _term_weight_cache["key"] = corpus_key
+        _term_weight_cache["expires_at"] = now + _TERM_WEIGHT_TTL_SECONDS
+        _term_weight_cache["weights"] = weights
+
+    return weights
 
 
 @router.post(
@@ -304,35 +342,61 @@ def match_jobs_to_resume(
     )
 
     prepared_resume_features = prepare_resume_features(resume_text)
-    jobs = db.scalars(select(Job)).all()
-    matches = []
 
-    for job in jobs:
+    # Score from lightweight rows; full Job objects are only loaded for the
+    # page that is returned.
+    job_rows = db.execute(
+        select(Job.id, Job.title, Job.description, Job.created_at)
+    ).all()
+
+    # Corpus-wide term weights make distinctive skills count for more than
+    # generic words. Without them the matcher falls back to unweighted scoring.
+    term_weights = _corpus_term_weights(job_rows)
+
+    scored = []
+    for row in job_rows:
         match = score_resume_job_match(
-            resume_text,
-            title=job.title,
-            description=job.description,
-            employment_type=job.employment_type,
+            "",
+            title=row.title,
+            description=row.description,
             prepared_resume_features=prepared_resume_features,
+            term_weights=term_weights,
         )
-        job_data = JobRead.model_validate(job).model_dump()
-        matches.append({**job_data, **match})
+        scored.append((row, match))
 
     # Rank the full result set before applying pagination.
-    matches.sort(
-        key=lambda item: (
-            item["match_score"],
-            item["created_at"],
-            item["id"],
+    scored.sort(
+        key=lambda pair: (
+            pair[1]["match_score"],
+            pair[0].created_at,
+            pair[0].id,
         ),
         reverse=True,
     )
 
+    page = scored[skip : skip + limit]
+    page_ids = [row.id for row, _ in page]
+    jobs_by_id = (
+        {
+            job.id: job
+            for job in db.scalars(select(Job).where(Job.id.in_(page_ids)))
+        }
+        if page_ids
+        else {}
+    )
+
+    items = []
+    for row, match in page:
+        job = jobs_by_id.get(row.id)
+        if job is None:  # Deleted between the two queries.
+            continue
+        items.append({**JobRead.model_validate(job).model_dump(), **match})
+
     return {
         "resume_id": resume.id,
         "resume_filename": resume.original_filename,
-        "items": matches[skip : skip + limit],
-        "total": len(matches),
+        "items": items,
+        "total": len(scored),
         "skip": skip,
         "limit": limit,
     }
