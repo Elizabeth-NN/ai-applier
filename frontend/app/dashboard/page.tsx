@@ -30,6 +30,7 @@ import {
 import Navbar from "@/components/Navbar";
 import BackendAuthCheck from "@/components/BackendAuthCheck";
 import ApplicationBatches from "@/components/ApplicationBatches";
+import ApplicationExecutions from "@/components/ApplicationExecutions";
 import CoverLetterDrafts from "@/components/CoverLetterDrafts";
 import MyDocuments from "@/components/MyDocuments";
 import Insights from "@/components/Insights";
@@ -391,6 +392,7 @@ const navItems = [
   { label: "My Documents", icon: Files },
   { label: "Applications", icon: Briefcase },
   { label: "Application Batches", icon: CheckCircle },
+  { label: "Application Executions", icon: PaperPlaneTilt },
   { label: "Cover Letter Drafts", icon: Files },
   { label: "Insights", icon: ChartPieSlice },
 ];
@@ -1422,6 +1424,7 @@ export default function DashboardPage() {
               activePage !== "Job Matches" &&
               activePage !== "Applications" &&
               activePage !== "Application Batches" &&
+              activePage !== "Application Executions" &&
               activePage !== "Cover Letter Drafts" &&
               activePage !== "My Documents" &&
               activePage !== "Insights" && (
@@ -1443,6 +1446,7 @@ export default function DashboardPage() {
               )}
 
             {activePage === "Application Batches" && <ApplicationBatches />}
+            {activePage === "Application Executions" && <ApplicationExecutions />}
             {activePage === "Cover Letter Drafts" && (
               <CoverLetterDrafts initialDraftId={draftToOpenId} />
             )}
@@ -2343,6 +2347,7 @@ export default function DashboardPage() {
         <div className="fixed inset-x-3 bottom-[calc(4.75rem+env(safe-area-inset-bottom))] z-40 rounded-2xl border border-slate-200 bg-white p-2 shadow-xl lg:hidden">
           {[
             { label: "Application Batches", icon: CheckCircle },
+            { label: "Application Executions", icon: PaperPlaneTilt },
             { label: "Cover Letter Drafts", icon: Files },
             { label: "Insights", icon: ChartPieSlice },
           ].map(({ label, icon: Icon }) => (
@@ -2380,7 +2385,7 @@ export default function DashboardPage() {
           const active =
             page === "More"
               ? mobileMoreOpen ||
-                ["Application Batches", "Cover Letter Drafts", "Insights"].includes(activePage)
+                ["Application Batches", "Application Executions", "Cover Letter Drafts", "Insights"].includes(activePage)
               : activePage === page;
 
           return (

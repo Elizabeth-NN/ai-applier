@@ -1,10 +1,12 @@
 """API endpoints for preparing application executions."""
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, Query, status
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.auth import CurrentUser
 from app.db.dependencies import get_db
+from app.models.application_execution import ApplicationExecution
 from app.schemas.application_execution import (
     ApplicationExecutionComplete,
     ApplicationExecutionAttention,
@@ -28,6 +30,29 @@ router = APIRouter(
     tags=["Application Executions"],
 )
 
+
+@router.get(
+    "",
+    response_model=list[ApplicationExecutionRead],
+)
+def list_application_executions(
+    user_id: CurrentUser,
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=20, ge=1, le=100),
+    db: Session = Depends(get_db),
+):
+    """List the authenticated user's application executions."""
+    statement = (
+        select(ApplicationExecution)
+        .where(ApplicationExecution.user_id == user_id)
+        .order_by(
+            ApplicationExecution.created_at.desc(),
+            ApplicationExecution.id.desc(),
+        )
+        .offset(skip)
+        .limit(limit)
+    )
+    return db.scalars(statement).all()
 
 @router.post(
     "/prepare",

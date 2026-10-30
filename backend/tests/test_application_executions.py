@@ -696,3 +696,71 @@ def test_attention_execution_cannot_be_marked_failed(execution_context):
     )
 
     assert response.status_code == 409
+
+
+def test_list_executions_returns_only_authenticated_users_records(
+    execution_context,
+):
+    client = execution_context["client"]
+
+    prepared = prepare_execution(execution_context)
+    assert prepared.status_code == 201
+
+    execution_context["current_user"]["id"] = "user_test_2"
+
+    response = client.get("/api/application-executions")
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_list_executions_supports_newest_first_pagination(
+    execution_context,
+):
+    client = execution_context["client"]
+
+    execution_ids = []
+
+    for index in range(3):
+        response = client.post(
+            "/api/application-executions/prepare",
+            headers={"Idempotency-Key": f"pagination-test-{index}"},
+            json={
+                "application_id": execution_context["application_id"],
+                "resume_id": execution_context["resume_id"],
+            },
+        )
+
+        assert response.status_code == 201
+        execution_ids.append(response.json()["id"])
+
+    first_page = client.get(
+        "/api/application-executions?skip=0&limit=2"
+    )
+    second_page = client.get(
+        "/api/application-executions?skip=2&limit=2"
+    )
+
+    assert first_page.status_code == 200
+    assert second_page.status_code == 200
+
+    first_page_ids = [item["id"] for item in first_page.json()]
+    second_page_ids = [item["id"] for item in second_page.json()]
+
+    assert first_page_ids == list(reversed(execution_ids[-2:]))
+    assert second_page_ids == [execution_ids[0]]
+    assert set(first_page_ids).isdisjoint(second_page_ids)
+
+
+def test_list_executions_rejects_invalid_pagination(execution_context):
+    client = execution_context["client"]
+
+    invalid_limit = client.get(
+        "/api/application-executions?limit=101"
+    )
+    negative_skip = client.get(
+        "/api/application-executions?skip=-1"
+    )
+
+    assert invalid_limit.status_code == 422
+    assert negative_skip.status_code == 422
