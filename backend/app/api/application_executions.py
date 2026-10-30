@@ -7,12 +7,14 @@ from app.core.auth import CurrentUser
 from app.db.dependencies import get_db
 from app.schemas.application_execution import (
     ApplicationExecutionComplete,
+    ApplicationExecutionFail,
     ApplicationExecutionPrepare,
     ApplicationExecutionRead,
 )
 from app.services.application_preparation import (
     approve_application_execution,
     complete_application_submission,
+    fail_application_submission,
     prepare_application_execution,
     review_application_execution,
     start_application_submission,
@@ -119,4 +121,24 @@ def complete_execution(
         user_id=user_id,
         execution_id=execution_id,
         submission_reference=payload.submission_reference,
+    )
+
+
+
+@router.post(
+    "/{execution_id}/fail",
+    response_model=ApplicationExecutionRead,
+)
+def fail_execution(
+    execution_id: int,
+    payload: ApplicationExecutionFail,
+    user_id: CurrentUser,
+    db: Session = Depends(get_db),
+):
+    """Record a definitive failure for a submission attempt."""
+    return fail_application_submission(
+        db,
+        user_id=user_id,
+        execution_id=execution_id,
+        failure_reason=payload.failure_reason,
     )

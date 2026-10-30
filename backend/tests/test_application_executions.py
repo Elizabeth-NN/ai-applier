@@ -485,3 +485,79 @@ def test_completion_preserves_existing_application_status(
             execution_context["application_id"],
         )
         assert application.status == existing_status
+
+
+def test_fail_submission_records_failure(execution_context):
+    client = execution_context["client"]
+    execution_id = start_execution_for_test(execution_context)
+
+    response = client.post(
+        f"/api/application-executions/{execution_id}/fail",
+        json={"failure_reason": "Employer website returned an error."},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "failed"
+    assert body["failure_reason"] == "Employer website returned an error."
+    assert body["submission_attempt_id"] is not None
+    assert body["submitted_at"] is None
+
+    with execution_context["db_factory"]() as db:
+        application = db.get(
+            Application,
+            execution_context["application_id"],
+        )
+        assert application.status == "saved"
+        assert application.applied_at is None
+
+
+def test_fail_submission_rejects_blank_reason(execution_context):
+    execution_id = start_execution_for_test(execution_context)
+
+    response = execution_context["client"].post(
+        f"/api/application-executions/{execution_id}/fail",
+        json={"failure_reason": "   "},
+    )
+
+    assert response.status_code == 422
+
+
+def test_fail_submission_cannot_be_completed_twice(execution_context):
+    execution_id = start_execution_for_test(execution_context)
+    url = f"/api/application-executions/{execution_id}/fail"
+
+    first = execution_context["client"].post(
+        url,
+        json={"failure_reason": "Submission failed."},
+    )
+    second = execution_context["client"].post(
+        url,
+        json={"failure_reason": "Another failure."},
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 409
+
+
+def test_another_user_cannot_fail_submission(execution_context):
+    execution_id = start_execution_for_test(execution_context)
+    execution_context["current_user"]["id"] = "user_test_2"
+
+    response = execution_context["client"].post(
+        f"/api/application-executions/{execution_id}/fail",
+        json={"failure_reason": "Submission failed."},
+    )
+
+    assert response.status_code == 404
+
+
+def test_cannot_fail_submission_before_start(execution_context):
+    execution_id = approve_execution_for_test(execution_context)
+
+    response = execution_context["client"].post(
+        f"/api/application-executions/{execution_id}/fail",
+        json={"failure_reason": "Submission failed."},
+    )
+
+    assert response.status_code == 409

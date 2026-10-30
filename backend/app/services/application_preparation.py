@@ -530,3 +530,60 @@ def complete_application_submission(
     db.refresh(execution)
 
     return execution
+
+
+def fail_application_submission(
+    db: Session,
+    *,
+    user_id: str,
+    execution_id: int,
+    failure_reason: str,
+) -> ApplicationExecution:
+    """Record a definitive failure for an active submission attempt."""
+    execution = db.scalar(
+        select(ApplicationExecution).where(
+            ApplicationExecution.id == execution_id,
+            ApplicationExecution.user_id == user_id,
+        )
+    )
+
+    if execution is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Application execution not found.",
+        )
+
+    if (
+        execution.status != "submitting"
+        or execution.submission_attempt_id is None
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="Only an active submission attempt can be marked as failed.",
+        )
+
+    result = db.execute(
+        update(ApplicationExecution)
+        .where(
+            ApplicationExecution.id == execution_id,
+            ApplicationExecution.user_id == user_id,
+            ApplicationExecution.status == "submitting",
+            ApplicationExecution.submission_attempt_id.is_not(None),
+        )
+        .values(
+            status="failed",
+            failure_reason=failure_reason,
+        )
+    )
+
+    if result.rowcount != 1:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="This submission attempt has already ended or changed.",
+        )
+
+    db.commit()
+    db.refresh(execution)
+
+    return execution

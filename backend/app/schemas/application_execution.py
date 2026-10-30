@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class ApplicationExecutionPrepare(BaseModel):
@@ -55,3 +55,28 @@ class ApplicationExecutionComplete(BaseModel):
         default=None,
         max_length=255,
     )
+
+
+
+class ApplicationExecutionFail(BaseModel):
+    failure_reason: str = Field(min_length=1, max_length=2000)
+
+    @field_validator("failure_reason")
+    @classmethod
+    def validate_failure_reason(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Failure reason cannot be blank.")
+        return value
+
+
+class ApplicationExecutionAttention(BaseModel):
+    reason: str = Field(min_length=1, max_length=2000)
+
+    @field_validator("reason")
+    @classmethod
+    def validate_reason(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Attention reason cannot be blank.")
+        return value
