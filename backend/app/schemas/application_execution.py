@@ -16,6 +16,7 @@ class ExtensionHandoffIssueResponse(BaseModel):
 
 class ExtensionHandoffRedeemRequest(BaseModel):
     token: SecretStr = Field(min_length=32, max_length=256)
+    active_url: str = Field(min_length=1, max_length=2048)
 
 
 class ExtensionHandoffRedeemResponse(BaseModel):

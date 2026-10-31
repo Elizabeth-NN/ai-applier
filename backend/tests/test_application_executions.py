@@ -296,6 +296,17 @@ def approve_execution_for_test(context):
     return execution_id
 
 
+def approve_greenhouse_execution_for_test(context):
+    """Prepare an approved execution for a supported Greenhouse job."""
+    with context["db_factory"]() as db:
+        job = db.scalar(select(Job))
+        assert job is not None
+        job.source_url = "https://boards.greenhouse.io/example/jobs/123"
+        db.commit()
+
+    return approve_execution_for_test(context)
+
+
 def test_start_submission_requires_approval(execution_context):
     client = execution_context["client"]
     prepared = prepare_execution(execution_context)
@@ -888,11 +899,14 @@ def test_reissuing_extension_handoff_invalidates_previous_token(
 
 def test_extension_handoff_can_be_redeemed_once(execution_context):
     client = execution_context["client"]
-    execution_id = approve_execution_for_test(execution_context)
+    execution_id = approve_greenhouse_execution_for_test(execution_context)
     issued = client.post(f"/api/application-executions/{execution_id}/extension-handoff")
     assert issued.status_code == 200
     token = issued.json()["token"]
-    redeemed = client.post("/api/extension-handoffs/redeem", json={"token": token})
+    redeemed = client.post("/api/extension-handoffs/redeem", json={
+            "token": token,
+            "active_url": "https://boards.greenhouse.io/example/jobs/123",
+        })
     assert redeemed.status_code == 200
     body = redeemed.json()
     assert body["execution_id"] == execution_id
@@ -903,7 +917,10 @@ def test_extension_handoff_can_be_redeemed_once(execution_context):
     assert "user_id" not in body
     assert "resume_id" not in body
     assert "resume_sha256" not in body
-    second = client.post("/api/extension-handoffs/redeem", json={"token": token})
+    second = client.post("/api/extension-handoffs/redeem", json={
+            "token": token,
+            "active_url": "https://boards.greenhouse.io/example/jobs/123",
+        })
     assert second.status_code == 401
     with execution_context["db_factory"]() as db:
         execution = db.get(ApplicationExecution, execution_id)
@@ -915,9 +932,49 @@ def test_extension_handoff_can_be_redeemed_once(execution_context):
         assert execution.submitted_at is None
 
 
+def test_extension_handoff_wrong_job_url_does_not_consume_token(
+    execution_context,
+):
+    client = execution_context["client"]
+    execution_id = approve_greenhouse_execution_for_test(execution_context)
+
+    issued = client.post(
+        f"/api/application-executions/{execution_id}/extension-handoff"
+    )
+    assert issued.status_code == 200
+    token = issued.json()["token"]
+
+    wrong_page = client.post(
+        "/api/extension-handoffs/redeem",
+        json={
+            "token": token,
+            "active_url": "https://boards.greenhouse.io/another-company/jobs/456",
+        },
+    )
+    assert wrong_page.status_code == 409
+
+    with execution_context["db_factory"]() as db:
+        execution = db.get(ApplicationExecution, execution_id)
+        assert execution.extension_handoff_token_hash is not None
+        assert execution.extension_handoff_redeemed_at is None
+
+    correct_page = client.post(
+        "/api/extension-handoffs/redeem",
+        json={
+            "token": token,
+            "active_url": "https://boards.greenhouse.io/example/jobs/123",
+        },
+    )
+    assert correct_page.status_code == 200
+
+
 def test_extension_handoff_rejects_invalid_token(execution_context):
     response = execution_context["client"].post(
-        "/api/extension-handoffs/redeem", json={"token": "x" * 40}
+        "/api/extension-handoffs/redeem",
+        json={
+            "token": "x" * 40,
+            "active_url": "https://boards.greenhouse.io/example/jobs/123",
+        },
     )
     assert response.status_code == 401
 
@@ -925,7 +982,7 @@ def test_extension_handoff_rejects_invalid_token(execution_context):
 
 def test_extension_handoff_rejects_expired_token(execution_context):
     client = execution_context["client"]
-    execution_id = approve_execution_for_test(execution_context)
+    execution_id = approve_greenhouse_execution_for_test(execution_context)
     issued = client.post(f"/api/application-executions/{execution_id}/extension-handoff")
     assert issued.status_code == 200
     token = issued.json()["token"]
@@ -933,7 +990,10 @@ def test_extension_handoff_rejects_expired_token(execution_context):
         execution = db.get(ApplicationExecution, execution_id)
         execution.extension_handoff_expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
         db.commit()
-    response = client.post("/api/extension-handoffs/redeem", json={"token": token})
+    response = client.post("/api/extension-handoffs/redeem", json={
+            "token": token,
+            "active_url": "https://boards.greenhouse.io/example/jobs/123",
+        })
     assert response.status_code == 401
     with execution_context["db_factory"]() as db:
         execution = db.get(ApplicationExecution, execution_id)

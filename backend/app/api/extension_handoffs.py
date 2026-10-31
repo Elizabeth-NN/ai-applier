@@ -29,4 +29,5 @@ def redeem_handoff(
     return redeem_extension_handoff(
         db,
         token=payload.token.get_secret_value(),
+        active_url=payload.active_url,
     )

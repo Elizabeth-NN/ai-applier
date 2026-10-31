@@ -134,6 +134,10 @@ export default function ApplicationExecutions() {
   const [saving, setSaving] = useState(false);
   const [actionId, setActionId] = useState<number | null>(null);
   const [confirmApprovalId, setConfirmApprovalId] = useState<number | null>(null);
+  const [handoff, setHandoff] = useState<
+    (ExtensionHandoff & { executionId: number }) | null
+  >(null);
+  const [handoffLoadingId, setHandoffLoadingId] = useState<number | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -304,6 +308,38 @@ export default function ApplicationExecutions() {
       );
     } finally {
       setActionId(null);
+    }
+  }
+
+  async function generateExtensionHandoff(executionId: number) {
+    setError("");
+    setNotice("");
+    setHandoff(null);
+    setHandoffLoadingId(executionId);
+
+    try {
+      const token = await getToken();
+
+      if (!token) throw new Error("Please sign in again.");
+
+      const issued = await apiRequest<ExtensionHandoff>(
+        `/api/application-executions/${executionId}/extension-handoff`,
+        token,
+        { method: "POST" },
+      );
+
+      setHandoff({ ...issued, executionId });
+      setNotice(
+        `One-time extension token created for Execution #${executionId}.`,
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Could not create an extension handoff token.",
+      );
+    } finally {
+      setHandoffLoadingId(null);
     }
   }
 
@@ -707,7 +743,67 @@ export default function ApplicationExecutions() {
                           : "Approve snapshot"}
                       </button>
                     )}
+
+                    {execution.status === "approved" &&
+                      execution.ats_platform === "greenhouse" && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void generateExtensionHandoff(execution.id)
+                          }
+                          disabled={handoffLoadingId === execution.id}
+                          className="rounded-lg border border-violet-300 px-4 py-2 text-sm font-semibold text-violet-700 hover:bg-violet-50 disabled:opacity-50"
+                        >
+                          {handoffLoadingId === execution.id
+                            ? "Generating token..."
+                            : "Generate extension token"}
+                        </button>
+                      )}
                   </div>
+
+                  {handoff?.executionId === execution.id && (
+                    <div className="mt-4 rounded-xl border border-violet-200 bg-violet-50 p-4">
+                      <h4 className="text-sm font-bold text-violet-950">
+                        One-time extension token
+                      </h4>
+                      <p className="mt-1 text-sm text-violet-800">
+                        Expires:{" "}
+                        {new Date(handoff.expires_at).toLocaleString()}
+                      </p>
+                      <code className="mt-3 block overflow-x-auto break-all rounded-lg bg-white p-3 text-sm text-slate-800">
+                        {handoff.token}
+                      </code>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            try {
+                              await navigator.clipboard.writeText(handoff.token);
+                              setNotice("Extension token copied to clipboard.");
+                            } catch {
+                              setError(
+                                "Could not copy the token. Select and copy it manually.",
+                              );
+                            }
+                          }}
+                          className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-700"
+                        >
+                          Copy token
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setHandoff(null)}
+                          className="rounded-lg border border-violet-200 px-4 py-2 text-sm font-semibold text-violet-800 hover:bg-white"
+                        >
+                          Hide token
+                        </button>
+                      </div>
+                      <p className="mt-3 text-xs leading-5 text-violet-800">
+                        Paste this token into the AI Applier Chrome extension.
+                        It can be used once. Do not share it.
+                      </p>
+                    </div>
+                  )}
 
                   {confirmApprovalId === execution.id && canApprove && (
                     <div className="mt-4 rounded-xl border border-violet-200 bg-violet-50 p-4">

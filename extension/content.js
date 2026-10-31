@@ -14,24 +14,16 @@ function findCoverLetterField() {
   if (fieldId) {
     const field = document.getElementById(fieldId);
 
-    if (
-      field instanceof HTMLTextAreaElement ||
-      field instanceof HTMLInputElement
-    ) {
+    if (field instanceof HTMLTextAreaElement) {
       return field;
     }
   }
 
-  const nestedField = label.querySelector("textarea, input");
+  const nestedField = label.querySelector("textarea");
 
-  if (
-    nestedField instanceof HTMLTextAreaElement ||
-    nestedField instanceof HTMLInputElement
-  ) {
-    return nestedField;
-  }
-
-  return null;
+  return nestedField instanceof HTMLTextAreaElement
+    ? nestedField
+    : null;
 }
 
 function prepareApplication(application) {

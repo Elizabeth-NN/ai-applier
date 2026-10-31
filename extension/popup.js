@@ -19,6 +19,10 @@ prepareButton.addEventListener("click", async () => {
       token,
     });
 
+    if (result?.tokenConsumed) {
+      tokenInput.value = "";
+    }
+
     if (!result?.success) {
       throw new Error(
         result?.message || result?.error || "Application preparation failed."
@@ -26,7 +30,6 @@ prepareButton.addEventListener("click", async () => {
     }
 
     status.textContent = result.message;
-    tokenInput.value = "";
   } catch (error) {
     status.textContent =
       error.message || "Something went wrong while preparing the application.";

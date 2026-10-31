@@ -78,6 +78,28 @@ def _detect_ats_platform(url: str) -> str:
     return "unsupported"
 
 
+def _normalise_greenhouse_job_url(url: str) -> tuple | None:
+    """Return comparable URL parts for a valid HTTPS Greenhouse job URL."""
+    try:
+        validated_url = _validate_target_url(url)
+        parsed = urlsplit(validated_url)
+
+        if parsed.scheme.lower() != "https":
+            return None
+
+        if _detect_ats_platform(validated_url) != "greenhouse":
+            return None
+
+        return (
+            (parsed.hostname or "").lower(),
+            parsed.port or 443,
+            parsed.path.rstrip("/") or "/",
+            parsed.query,
+        )
+    except (HTTPException, ValueError):
+        return None
+
+
 def _existing_execution(
     db: Session,
     user_id: str,
@@ -465,6 +487,7 @@ def redeem_extension_handoff(
     db: Session,
     *,
     token: str,
+    active_url: str,
 ) -> dict[str, Any]:
     """Atomically redeem and invalidate a single-use handoff credential."""
     token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
@@ -481,6 +504,30 @@ def redeem_extension_handoff(
         raise HTTPException(
             status_code=401,
             detail="Invalid, expired, or already used handoff credential.",
+        )
+
+    execution = db.get(ApplicationExecution, execution_id)
+
+    if execution is None:
+        db.rollback()
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid, expired, or already used handoff credential.",
+        )
+
+    expected_url = _normalise_greenhouse_job_url(execution.target_url)
+    supplied_url = _normalise_greenhouse_job_url(active_url)
+
+    if (
+        execution.ats_platform != "greenhouse"
+        or expected_url is None
+        or supplied_url is None
+        or expected_url != supplied_url
+    ):
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Open the exact Greenhouse job associated with this execution.",
         )
 
     # Only one request can redeem the credential. Clear its hash in the
