@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Applier Assistant</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <main class="container">
+    <header>
+      <h1>AI Applier</h1>
+      <p class="subtitle">Application assistant</p>
+    </header>
+
+    <section>
+      <label for="handoff-token">Handoff token</label>
+      <textarea
+        id="handoff-token"
+        rows="3"
+        placeholder="Paste your one-time handoff token"
+        autocomplete="off"
+        spellcheck="false"
+      ></textarea>
+
+      <button id="prepare-button" type="button">
+        Prepare application
+      </button>
+
+      <p id="status" role="status" aria-live="polite">
+        Open a supported Greenhouse application page to get started.
+      </p>
+    </section>
+
+    <footer>
+      <p>Review every field before submitting your application.</p>
+      <strong>You remain in control of submission.</strong>
+    </footer>
+  </main>
+
+  <script src="popup.js"></script>
+</body>
+</html>
