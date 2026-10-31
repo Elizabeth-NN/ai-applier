@@ -1,7 +1,7 @@
 from collections.abc import Generator
 
 import hashlib
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
@@ -856,5 +856,61 @@ def test_reissuing_extension_handoff_invalidates_previous_token(
 
         assert execution.extension_handoff_token_hash == second_hash
         assert execution.extension_handoff_token_hash != first_hash
+        assert execution.extension_handoff_redeemed_at is None
+        assert execution.status == "approved"
+
+
+
+def test_extension_handoff_can_be_redeemed_once(execution_context):
+    client = execution_context["client"]
+    execution_id = approve_execution_for_test(execution_context)
+    issued = client.post(f"/api/application-executions/{execution_id}/extension-handoff")
+    assert issued.status_code == 200
+    token = issued.json()["token"]
+    redeemed = client.post("/api/extension-handoffs/redeem", json={"token": token})
+    assert redeemed.status_code == 200
+    body = redeemed.json()
+    assert body["execution_id"] == execution_id
+    assert body["target_url"]
+    assert body["ats_platform"]
+    assert body["job_snapshot"]
+    assert body["resume_filename"]
+    assert "user_id" not in body
+    assert "resume_id" not in body
+    assert "resume_sha256" not in body
+    second = client.post("/api/extension-handoffs/redeem", json={"token": token})
+    assert second.status_code == 401
+    with execution_context["db_factory"]() as db:
+        execution = db.get(ApplicationExecution, execution_id)
+        assert execution.extension_handoff_redeemed_at is not None
+        assert execution.extension_handoff_token_hash is None
+        assert execution.status == "approved"
+        assert execution.submission_attempt_id is None
+        assert execution.submission_started_at is None
+        assert execution.submitted_at is None
+
+
+def test_extension_handoff_rejects_invalid_token(execution_context):
+    response = execution_context["client"].post(
+        "/api/extension-handoffs/redeem", json={"token": "x" * 40}
+    )
+    assert response.status_code == 401
+
+
+
+def test_extension_handoff_rejects_expired_token(execution_context):
+    client = execution_context["client"]
+    execution_id = approve_execution_for_test(execution_context)
+    issued = client.post(f"/api/application-executions/{execution_id}/extension-handoff")
+    assert issued.status_code == 200
+    token = issued.json()["token"]
+    with execution_context["db_factory"]() as db:
+        execution = db.get(ApplicationExecution, execution_id)
+        execution.extension_handoff_expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+        db.commit()
+    response = client.post("/api/extension-handoffs/redeem", json={"token": token})
+    assert response.status_code == 401
+    with execution_context["db_factory"]() as db:
+        execution = db.get(ApplicationExecution, execution_id)
         assert execution.extension_handoff_redeemed_at is None
         assert execution.status == "approved"

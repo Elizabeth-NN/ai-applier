@@ -448,6 +448,75 @@ def create_extension_handoff(
         "expires_at": expires_at,
     }
 
+def redeem_extension_handoff(
+    db: Session,
+    *,
+    token: str,
+) -> dict[str, Any]:
+    """Atomically redeem and invalidate a single-use handoff credential."""
+    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    now = datetime.now(timezone.utc)
+
+    execution_id = db.scalar(
+        select(ApplicationExecution.id).where(
+            ApplicationExecution.extension_handoff_token_hash == token_hash,
+        )
+    )
+
+    if execution_id is None:
+        db.rollback()
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid, expired, or already used handoff credential.",
+        )
+
+    # Only one request can redeem the credential. Clear its hash in the
+    # same conditional update so it cannot be reused or retained afterward.
+    result = db.execute(
+        update(ApplicationExecution)
+        .where(
+            ApplicationExecution.id == execution_id,
+            ApplicationExecution.extension_handoff_token_hash == token_hash,
+            ApplicationExecution.extension_handoff_expires_at > now,
+            ApplicationExecution.extension_handoff_redeemed_at.is_(None),
+            ApplicationExecution.status == "approved",
+        )
+        .values(
+            extension_handoff_redeemed_at=now,
+            extension_handoff_token_hash=None,
+        )
+        .execution_options(synchronize_session=False)
+    )
+
+    if result.rowcount != 1:
+        db.rollback()
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid, expired, or already used handoff credential.",
+        )
+
+    execution = db.get(ApplicationExecution, execution_id)
+
+    if execution is None:
+        db.rollback()
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid, expired, or already used handoff credential.",
+        )
+
+    response = {
+        "execution_id": execution.id,
+        "target_url": execution.target_url,
+        "ats_platform": execution.ats_platform,
+        "job_snapshot": execution.job_snapshot,
+        "resume_filename": execution.resume_filename_snapshot,
+        "cover_letter": execution.cover_letter_snapshot,
+    }
+
+    db.commit()
+    return response
+
+
 def start_application_submission(
     db: Session,
     *,
