@@ -22,6 +22,31 @@ async function handlePreparation(token) {
     throw new Error("Please provide a valid handoff token.");
   }
 
+  // Validate the active tab BEFORE consuming the single-use token.
+  const tabs = await chrome.tabs.query({
+    active: true,
+    currentWindow: true,
+  });
+
+  const activeTab = tabs[0];
+
+  if (!activeTab?.id || !activeTab.url) {
+    throw new Error("No active browser tab was found.");
+  }
+
+  const url = new URL(activeTab.url);
+
+  if (
+    url.protocol !== "https:" ||
+    !(
+      url.hostname === "boards.greenhouse.io" ||
+      url.hostname === "job-boards.greenhouse.io"
+    )
+  ) {
+    throw new Error("Open a supported Greenhouse application page first.");
+  }
+
+  // Redeem only after validating the destination.
   const response = await fetch(`${API_BASE_URL}/api/extension-handoffs/redeem`, {
     method: "POST",
     headers: {
@@ -46,36 +71,14 @@ async function handlePreparation(token) {
     throw new Error("The backend returned an invalid application.");
   }
 
-  const tabs = await chrome.tabs.query({
-    active: true,
-    currentWindow: true,
-  });
-
-  const activeTab = tabs[0];
-
-  if (!activeTab?.id || !activeTab.url) {
-    throw new Error("No active browser tab was found.");
-  }
-
-  const url = new URL(activeTab.url);
-
-  if (
-    url.protocol !== "https:" ||
-    !(
-      url.hostname === "boards.greenhouse.io" ||
-      url.hostname === "job-boards.greenhouse.io"
-    )
-  ) {
-    throw new Error("Open a supported Greenhouse application page first.");
-  }
-
-  await chrome.tabs.sendMessage(activeTab.id, {
+  const result = await chrome.tabs.sendMessage(activeTab.id, {
     type: "FILL_APPLICATION",
     application,
   });
 
-  return {
-    success: true,
-    message: "Application data sent to the active Greenhouse page.",
-  };
+  if (!result || typeof result.success !== "boolean") {
+    throw new Error("The Greenhouse page returned an invalid response.");
+  }
+
+  return result;
 }
