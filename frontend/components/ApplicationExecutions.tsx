@@ -29,6 +29,11 @@ type ExecutionStatus =
   | "failed"
   | "needs_attention";
 
+type ExtensionHandoff = {
+  token: string;
+  expires_at: string;
+};
+
 type ApplicationExecution = {
   id: number;
   application_id: number;

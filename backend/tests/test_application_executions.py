@@ -137,6 +137,31 @@ def test_prepare_endpoint_creates_execution(execution_context):
     assert body["submitted_at"] is None
 
 
+@pytest.mark.parametrize(
+    ("source_url", "expected_platform"),
+    [
+        ("https://boards.greenhouse.io/example/jobs/123", "greenhouse"),
+        ("https://job-boards.greenhouse.io/example/jobs/123", "greenhouse"),
+        ("https://example.com/jobs/123", "unsupported"),
+    ],
+)
+def test_prepare_endpoint_detects_ats_platform(
+    execution_context,
+    source_url,
+    expected_platform,
+):
+    with execution_context["db_factory"]() as db:
+        job = db.scalar(select(Job))
+        assert job is not None
+        job.source_url = source_url
+        db.commit()
+
+    response = prepare_execution(execution_context)
+
+    assert response.status_code == 201
+    assert response.json()["ats_platform"] == expected_platform
+
+
 def test_prepare_endpoint_is_idempotent(execution_context):
     first = prepare_execution(execution_context)
     second = prepare_execution(execution_context)

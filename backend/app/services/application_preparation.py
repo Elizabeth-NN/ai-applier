@@ -65,6 +65,19 @@ def _validate_target_url(url: str | None) -> str:
     return url
 
 
+def _detect_ats_platform(url: str) -> str:
+    """Identify only ATS platforms explicitly supported by the extension."""
+    hostname = (urlsplit(url).hostname or "").lower()
+
+    if hostname in {
+        "boards.greenhouse.io",
+        "job-boards.greenhouse.io",
+    }:
+        return "greenhouse"
+
+    return "unsupported"
+
+
 def _existing_execution(
     db: Session,
     user_id: str,
@@ -264,7 +277,7 @@ def prepare_application_execution(
         job_snapshot=job_snapshot,
         application_payload=application_payload,
         target_url=target_url,
-        ats_platform="unsupported",
+        ats_platform=_detect_ats_platform(target_url),
         status="prepared",
         idempotency_key=key,
     )
