@@ -35,6 +35,7 @@ type ApplicationExecution = {
   resume_id: number | null;
   cover_letter_draft_id: number | null;
   resume_filename_snapshot: string | null;
+  resume_sha256: string | null;
   cover_letter_snapshot: string | null;
   job_snapshot: Record<string, unknown>;
   application_payload: Record<string, unknown>;
@@ -87,6 +88,22 @@ async function apiRequest<T>(
   return data as T;
 }
 
+function snapshotText(value: unknown): string {
+  if (value === null || value === undefined || value === "") {
+    return "Not provided";
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => snapshotText(item)).join(", ");
+  }
+
+  if (typeof value === "object") {
+    return JSON.stringify(value, null, 2);
+  }
+
+  return String(value);
+}
+
 const statusStyles: Record<ExecutionStatus, string> = {
   prepared: "bg-slate-100 text-slate-700",
   approved: "bg-violet-100 text-violet-700",
@@ -111,6 +128,7 @@ export default function ApplicationExecutions() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [actionId, setActionId] = useState<number | null>(null);
+  const [confirmApprovalId, setConfirmApprovalId] = useState<number | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -456,7 +474,8 @@ export default function ApplicationExecutions() {
             {executions.map((execution) => {
               const canReview = execution.status === "prepared";
               const canApprove =
-                execution.status === "prepared" && execution.reviewed_at;
+                execution.status === "prepared" && Boolean(execution.reviewed_at);
+              const job = execution.job_snapshot;
 
               return (
                 <article
@@ -464,9 +483,14 @@ export default function ApplicationExecutions() {
                   className="rounded-xl border border-slate-200 p-4 sm:p-5"
                 >
                   <div className="flex flex-wrap items-center justify-between gap-3">
-                    <h3 className="font-bold text-slate-900">
-                      Execution #{execution.id}
-                    </h3>
+                    <div>
+                      <h3 className="font-bold text-slate-900">
+                        Execution #{execution.id}
+                      </h3>
+                      <p className="mt-1 text-sm font-medium text-slate-600">
+                        {snapshotText(job.title)} · {snapshotText(job.company)}
+                      </p>
+                    </div>
                     <span
                       className={`rounded-full px-3 py-1 text-xs font-semibold ${statusStyles[execution.status]}`}
                     >
@@ -515,6 +539,135 @@ export default function ApplicationExecutions() {
                     </a>
                   </div>
 
+                  {execution.ats_platform === "unsupported" && (
+                    <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
+                      <p className="text-sm font-semibold text-amber-900">
+                        Unsupported application platform
+                      </p>
+                      <p className="mt-1 text-sm leading-6 text-amber-800">
+                        We have not identified a supported ATS integration for
+                        this job. This snapshot can be reviewed and approved,
+                        but approval does not enable automatic submission.
+                      </p>
+                    </div>
+                  )}
+
+                  <details className="mt-5 rounded-xl border border-slate-200">
+                    <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-slate-800 hover:bg-slate-50">
+                      Review complete application snapshot
+                    </summary>
+
+                    <div className="space-y-5 border-t border-slate-200 p-4">
+                      <section>
+                        <h4 className="text-sm font-bold text-slate-900">
+                          Job information
+                        </h4>
+                        <dl className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
+                          {([
+                            ["Title", job.title],
+                            ["Company", job.company],
+                            ["Location", job.location],
+                            ["Employment type", job.employment_type],
+                            ["Remote type", job.remote_type],
+                            ["Source", job.source_name],
+                            ["Eligible countries", job.eligible_countries],
+                            ["Eligibility status", job.eligibility_status],
+                          ] as [string, unknown][]).map(([label, value]) => (
+                            <div key={label}>
+                              <dt className="text-xs font-medium text-slate-400">
+                                {label}
+                              </dt>
+                              <dd className="mt-1 break-words text-slate-700">
+                                {snapshotText(value)}
+                              </dd>
+                            </div>
+                          ))}
+                        </dl>
+
+                        <div className="mt-4">
+                          <h5 className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                            Job description snapshot
+                          </h5>
+                          <div className="mt-2 max-h-72 overflow-y-auto whitespace-pre-wrap rounded-lg bg-slate-50 p-3 text-sm leading-6 text-slate-700">
+                            {snapshotText(job.description)}
+                          </div>
+                        </div>
+
+                        {(job.eligibility_evidence != null ||
+                          typeof job.eligibility_evidence_url === "string") && (
+                          <div className="mt-3 rounded-lg bg-slate-50 p-3 text-sm">
+                            <p className="font-semibold text-slate-700">
+                              Eligibility evidence
+                            </p>
+                            {job.eligibility_evidence != null && (
+                              <p className="mt-1 whitespace-pre-wrap text-slate-600">
+                                {snapshotText(job.eligibility_evidence)}
+                              </p>
+                            )}
+                            {typeof job.eligibility_evidence_url === "string" && (
+                              <a
+                                href={job.eligibility_evidence_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="mt-2 block break-all text-violet-700 hover:underline"
+                              >
+                                View eligibility evidence
+                              </a>
+                            )}
+                          </div>
+                        )}
+                      </section>
+
+                      <section className="border-t border-slate-100 pt-4">
+                        <h4 className="text-sm font-bold text-slate-900">
+                          Resume snapshot
+                        </h4>
+                        <p className="mt-2 break-words text-sm text-slate-700">
+                          {execution.resume_filename_snapshot || "Not available"}
+                        </p>
+                        <p className="mt-2 text-xs text-slate-400">
+                          SHA-256 fingerprint
+                        </p>
+                        <code className="mt-1 block break-all rounded-lg bg-slate-50 p-3 text-xs text-slate-600">
+                          {execution.resume_sha256 || "Not available"}
+                        </code>
+                        <p className="mt-2 text-xs text-slate-500">
+                          The fingerprint identifies the resume file captured
+                          when this execution was prepared.
+                        </p>
+                      </section>
+
+                      <section className="border-t border-slate-100 pt-4">
+                        <h4 className="text-sm font-bold text-slate-900">
+                          Cover-letter snapshot
+                        </h4>
+                        {execution.cover_letter_snapshot ? (
+                          <div className="mt-2 max-h-72 overflow-y-auto whitespace-pre-wrap rounded-lg bg-slate-50 p-3 text-sm leading-6 text-slate-700">
+                            {execution.cover_letter_snapshot}
+                          </div>
+                        ) : (
+                          <p className="mt-2 text-sm text-slate-500">
+                            No cover letter was included in this snapshot.
+                          </p>
+                        )}
+                      </section>
+
+                      <section className="border-t border-slate-100 pt-4">
+                        <h4 className="text-sm font-bold text-slate-900">
+                          Application payload
+                        </h4>
+                        <p className="mt-1 text-xs text-slate-500">
+                          Exact saved data and references captured for this
+                          execution. No additional candidate answers have been
+                          invented.
+                        </p>
+                        <pre className="mt-3 max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-slate-950 p-4 text-xs leading-5 text-slate-100">
+                          {JSON.stringify(execution.application_payload, null, 2)}
+                        </pre>
+                      </section>
+                    </div>
+                  </details>
+
                   {execution.failure_reason && (
                     <p className="mt-3 text-sm text-red-600">
                       {execution.failure_reason}
@@ -540,9 +693,7 @@ export default function ApplicationExecutions() {
                     {canApprove && (
                       <button
                         type="button"
-                        onClick={() =>
-                          void updateExecution(execution.id, "approve")
-                        }
+                        onClick={() => setConfirmApprovalId(execution.id)}
                         disabled={actionId === execution.id}
                         className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-700 disabled:opacity-50"
                       >
@@ -552,6 +703,42 @@ export default function ApplicationExecutions() {
                       </button>
                     )}
                   </div>
+
+                  {confirmApprovalId === execution.id && canApprove && (
+                    <div className="mt-4 rounded-xl border border-violet-200 bg-violet-50 p-4">
+                      <h4 className="text-sm font-bold text-violet-950">
+                        Confirm snapshot approval
+                      </h4>
+                      <p className="mt-2 text-sm leading-6 text-violet-900">
+                        You are approving the saved job, resume and cover-letter
+                        snapshot for Execution #{execution.id}. This action does
+                        not submit an application or contact the employer.
+                      </p>
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setConfirmApprovalId(null);
+                            void updateExecution(execution.id, "approve");
+                          }}
+                          disabled={actionId === execution.id}
+                          className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-700 disabled:opacity-50"
+                        >
+                          {actionId === execution.id
+                            ? "Please wait..."
+                            : "Confirm approval"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setConfirmApprovalId(null)}
+                          disabled={actionId === execution.id}
+                          className="rounded-lg border border-violet-200 px-4 py-2 text-sm font-semibold text-violet-800 hover:bg-white disabled:opacity-50"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
 
                   {execution.reviewed_at && (
                     <p className="mt-3 text-xs text-emerald-700">
