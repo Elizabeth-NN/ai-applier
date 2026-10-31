@@ -1,5 +1,7 @@
 from collections.abc import Generator
 
+import hashlib
+from datetime import datetime, timezone
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
@@ -764,3 +766,95 @@ def test_list_executions_rejects_invalid_pagination(execution_context):
 
     assert invalid_limit.status_code == 422
     assert negative_skip.status_code == 422
+
+
+def test_extension_handoff_requires_approved_execution(execution_context):
+    client = execution_context["client"]
+    prepared = prepare_execution(execution_context)
+    execution_id = prepared.json()["id"]
+
+    response = client.post(
+        f"/api/application-executions/{execution_id}/extension-handoff"
+    )
+
+    assert response.status_code == 409
+
+
+def test_another_user_cannot_issue_extension_handoff(execution_context):
+    client = execution_context["client"]
+    execution_id = approve_execution_for_test(execution_context)
+
+    execution_context["current_user"]["id"] = "user_test_2"
+
+    response = client.post(
+        f"/api/application-executions/{execution_id}/extension-handoff"
+    )
+
+    assert response.status_code == 404
+
+
+def test_extension_handoff_stores_only_token_hash(execution_context):
+    client = execution_context["client"]
+    execution_id = approve_execution_for_test(execution_context)
+
+    response = client.post(
+        f"/api/application-executions/{execution_id}/extension-handoff"
+    )
+
+    assert response.status_code == 200
+
+    body = response.json()
+    token = body["token"]
+    expected_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    expires_at = datetime.fromisoformat(body["expires_at"])
+
+    assert len(token) > 30
+    assert expires_at > datetime.now(timezone.utc)
+
+    with execution_context["db_factory"]() as db:
+        execution = db.get(ApplicationExecution, execution_id)
+
+        assert execution.extension_handoff_token_hash == expected_hash
+        assert execution.extension_handoff_token_hash != token
+        assert execution.extension_handoff_expires_at is not None
+        assert execution.extension_handoff_redeemed_at is None
+
+        # Issuing a handoff must not start or submit an application.
+        assert execution.status == "approved"
+        assert execution.submission_attempt_id is None
+        assert execution.submission_started_at is None
+        assert execution.submitted_at is None
+
+
+def test_reissuing_extension_handoff_invalidates_previous_token(
+    execution_context,
+):
+    client = execution_context["client"]
+    execution_id = approve_execution_for_test(execution_context)
+
+    url = (
+        f"/api/application-executions/"
+        f"{execution_id}/extension-handoff"
+    )
+
+    first = client.post(url)
+    second = client.post(url)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+
+    first_token = first.json()["token"]
+    second_token = second.json()["token"]
+
+    assert first_token != second_token
+
+    first_hash = hashlib.sha256(first_token.encode("utf-8")).hexdigest()
+    second_hash = hashlib.sha256(second_token.encode("utf-8")).hexdigest()
+
+    with execution_context["db_factory"]() as db:
+        execution = db.get(ApplicationExecution, execution_id)
+
+        assert execution.extension_handoff_token_hash == second_hash
+        assert execution.extension_handoff_token_hash != first_hash
+        assert execution.extension_handoff_redeemed_at is None
+        assert execution.status == "approved"

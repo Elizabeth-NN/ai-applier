@@ -28,6 +28,10 @@ class ApplicationExecution(Base):
             "idempotency_key",
             name="uq_application_execution_user_idempotency",
         ),
+        UniqueConstraint(
+            "extension_handoff_token_hash",
+            name="uq_application_execution_extension_handoff_token_hash",
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
@@ -115,6 +119,22 @@ class ApplicationExecution(Base):
         nullable=True,
     )
     approved_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    # Short-lived, single-use Chrome extension handoff credential.
+    # Only the SHA-256 hash is persisted; the raw token is never stored.
+    extension_handoff_token_hash: Mapped[str | None] = mapped_column(
+        String(64),
+        nullable=True,
+    )
+
+    extension_handoff_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    extension_handoff_redeemed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
     )

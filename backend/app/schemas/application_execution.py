@@ -1,8 +1,8 @@
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
-
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
+from pydantic import AwareDatetime
 
 class ApplicationExecutionPrepare(BaseModel):
     application_id: int = Field(gt=0)
@@ -10,6 +10,21 @@ class ApplicationExecutionPrepare(BaseModel):
     cover_letter_draft_id: int | None = Field(default=None, gt=0)
     batch_item_id: int | None = Field(default=None, gt=0)
 
+class ExtensionHandoffIssueResponse(BaseModel):
+    token: str
+    expires_at: AwareDatetime
+
+class ExtensionHandoffRedeemRequest(BaseModel):
+    token: SecretStr = Field(min_length=32, max_length=256)
+
+
+class ExtensionHandoffRedeemResponse(BaseModel):
+    execution_id: int
+    target_url: str
+    ats_platform: str
+    job_snapshot: dict[str, Any]
+    resume_filename: str
+    cover_letter: str | None
 
 class ApplicationExecutionRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)

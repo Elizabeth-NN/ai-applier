@@ -13,6 +13,7 @@ from app.schemas.application_execution import (
     ApplicationExecutionFail,
     ApplicationExecutionPrepare,
     ApplicationExecutionRead,
+    ExtensionHandoffIssueResponse,
 )
 from app.services.application_preparation import (
     approve_application_execution,
@@ -22,6 +23,7 @@ from app.services.application_preparation import (
     prepare_application_execution,
     review_application_execution,
     start_application_submission,
+    create_extension_handoff,
 )
 
 
@@ -109,6 +111,22 @@ def approve_execution(
 ):
     """Explicitly approve a previously reviewed application execution."""
     return approve_application_execution(
+        db,
+        user_id=user_id,
+        execution_id=execution_id,
+    )
+
+@router.post(
+    "/{execution_id}/extension-handoff",
+    response_model=ExtensionHandoffIssueResponse,
+)
+def issue_extension_handoff(
+    execution_id: int,
+    user_id: CurrentUser,
+    db: Session = Depends(get_db),
+):
+    """Issue a short-lived credential for the approved Chrome extension handoff."""
+    return create_extension_handoff(
         db,
         user_id=user_id,
         execution_id=execution_id,

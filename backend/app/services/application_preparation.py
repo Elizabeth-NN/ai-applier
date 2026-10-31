@@ -2,10 +2,12 @@
 
 import hashlib
 import os
+import secrets
 import uuid
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlsplit
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException
 from sqlalchemy import select, update
@@ -384,6 +386,67 @@ def approve_application_execution(
 
     return execution
 
+
+def create_extension_handoff(
+    db: Session,
+    *,
+    user_id: str,
+    execution_id: int,
+) -> dict[str, Any]:
+    """Issue a short-lived, single-use credential for an approved execution."""
+    execution = db.scalar(
+        select(ApplicationExecution).where(
+            ApplicationExecution.id == execution_id,
+            ApplicationExecution.user_id == user_id,
+        )
+    )
+
+    if execution is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Application execution not found.",
+        )
+
+    if execution.status != "approved":
+        raise HTTPException(
+            status_code=409,
+            detail="Only approved executions can be handed off to the extension.",
+        )
+
+    now = datetime.now(timezone.utc)
+    expires_at = now + timedelta(minutes=5)
+    token = secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+    # Reissuing replaces the previous credential and invalidates it.
+    result = db.execute(
+        update(ApplicationExecution)
+        .where(
+            ApplicationExecution.id == execution_id,
+            ApplicationExecution.user_id == user_id,
+            ApplicationExecution.status == "approved",
+        )
+        .values(
+            extension_handoff_token_hash=token_hash,
+            extension_handoff_expires_at=expires_at,
+            extension_handoff_redeemed_at=None,
+        )
+    )
+
+    if result.rowcount != 1:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="This execution has changed. Request a new handoff.",
+        )
+
+    db.commit()
+
+    # The raw token is returned once and is never persisted.
+    return {
+        "token": token,
+        "expires_at": expires_at,
+    }
 
 def start_application_submission(
     db: Session,
