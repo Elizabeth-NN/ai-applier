@@ -1,7 +1,18 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react";
 import { useAuth } from "@clerk/nextjs";
+
+/* -------------------------------------------------------------------------- */
+/*  Types                                                                     */
+/* -------------------------------------------------------------------------- */
 
 type Application = {
   id: number;
@@ -56,6 +67,25 @@ type ApplicationExecution = {
   updated_at: string;
 };
 
+type JobSummary = { title: string; company: string };
+
+type NavTarget =
+  | "My Documents"
+  | "Cover Letter Drafts"
+  | "Find Jobs"
+  | "Applications";
+
+type Props = {
+  /** Optional: lets the empty-state hints link to other dashboard pages. */
+  onNavigate?: (page: NavTarget) => void;
+};
+
+type Filter = "all" | "todo" | "submitted" | "issues";
+
+/* -------------------------------------------------------------------------- */
+/*  Helpers                                                                   */
+/* -------------------------------------------------------------------------- */
+
 async function apiRequest<T>(
   path: string,
   token: string,
@@ -67,17 +97,14 @@ async function apiRequest<T>(
     throw new Error("NEXT_PUBLIC_API_URL is not configured.");
   }
 
-  const response = await fetch(
-    `${apiUrl.replace(/\/$/, "")}${path}`,
-    {
-      ...options,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        ...(options.body ? { "Content-Type": "application/json" } : {}),
-        ...options.headers,
-      },
+  const response = await fetch(`${apiUrl.replace(/\/$/, "")}${path}`, {
+    ...options,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      ...(options.body ? { "Content-Type": "application/json" } : {}),
+      ...options.headers,
     },
-  );
+  });
 
   const data = await response.json().catch(() => null);
 
@@ -109,31 +136,556 @@ function snapshotText(value: unknown): string {
   return String(value);
 }
 
-const statusStyles: Record<ExecutionStatus, string> = {
-  prepared: "bg-slate-100 text-slate-700",
-  approved: "bg-violet-100 text-violet-700",
-  submitting: "bg-amber-100 text-amber-700",
-  submitted: "bg-emerald-100 text-emerald-700",
-  failed: "bg-red-100 text-red-700",
-  needs_attention: "bg-orange-100 text-orange-700",
-};
+function formatPlatform(platform: string): string {
+  if (platform === "unsupported") return "Not supported";
+  return platform.charAt(0).toUpperCase() + platform.slice(1).replace(/_/g, " ");
+}
 
-export default function ApplicationExecutions() {
+const STEP_LABELS = ["Prepared", "Reviewed", "Approved", "Submitted"] as const;
+
+/** How far an execution has progressed through the four steps. */
+function getProgress(execution: ApplicationExecution): {
+  done: number;
+  problem: boolean;
+} {
+  switch (execution.status) {
+    case "submitted":
+      return { done: 4, problem: false };
+    case "approved":
+    case "submitting":
+      return { done: 3, problem: false };
+    case "failed":
+    case "needs_attention":
+      return {
+        done: execution.approved_at ? 3 : execution.reviewed_at ? 2 : 1,
+        problem: true,
+      };
+    default:
+      return { done: execution.reviewed_at ? 2 : 1, problem: false };
+  }
+}
+
+/** Plain-language label for what state the execution is really in. */
+function getStage(execution: ApplicationExecution): {
+  label: string;
+  style: string;
+} {
+  switch (execution.status) {
+    case "prepared":
+      return execution.reviewed_at
+        ? { label: "Ready to approve", style: "bg-violet-100 text-violet-700" }
+        : { label: "Needs review", style: "bg-amber-100 text-amber-700" };
+    case "approved":
+      return { label: "Approved", style: "bg-indigo-100 text-indigo-700" };
+    case "submitting":
+      return { label: "Submitting", style: "bg-amber-100 text-amber-700" };
+    case "submitted":
+      return { label: "Submitted", style: "bg-emerald-100 text-emerald-700" };
+    case "failed":
+      return { label: "Failed", style: "bg-red-100 text-red-700" };
+    case "needs_attention":
+      return {
+        label: "Needs attention",
+        style: "bg-orange-100 text-orange-700",
+      };
+  }
+}
+
+function filterOf(execution: ApplicationExecution): Exclude<Filter, "all"> {
+  if (execution.status === "submitted") return "submitted";
+  if (execution.status === "failed" || execution.status === "needs_attention") {
+    return "issues";
+  }
+  return "todo";
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Step tracker                                                              */
+/* -------------------------------------------------------------------------- */
+
+function StepTracker({ execution }: { execution: ApplicationExecution }) {
+  const { done, problem } = getProgress(execution);
+
+  return (
+    <ol
+      aria-label="Progress"
+      className="mt-4 flex flex-wrap items-center gap-x-2 gap-y-2"
+    >
+      {STEP_LABELS.map((label, index) => {
+        const complete = index < done;
+        const current = index === done;
+        const bad = current && problem;
+
+        return (
+          <li key={label} className="flex items-center gap-2">
+            {index > 0 && (
+              <span
+                aria-hidden="true"
+                className={`h-px w-5 ${complete ? "bg-emerald-300" : "bg-slate-200"}`}
+              />
+            )}
+            <span
+              className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold ${
+                complete
+                  ? "bg-emerald-500 text-white"
+                  : bad
+                    ? "bg-red-500 text-white"
+                    : current
+                      ? "bg-violet-600 text-white"
+                      : "bg-slate-100 text-slate-400"
+              }`}
+            >
+              {complete ? "✓" : bad ? "!" : index + 1}
+            </span>
+            <span
+              className={`text-xs font-semibold ${
+                complete
+                  ? "text-emerald-700"
+                  : bad
+                    ? "text-red-600"
+                    : current
+                      ? "text-violet-700"
+                      : "text-slate-400"
+              }`}
+            >
+              {label}
+            </span>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Execution card                                                            */
+/* -------------------------------------------------------------------------- */
+
+function ExecutionCard({
+  execution,
+  expanded,
+  busy,
+  confirmingApproval,
+  handoff,
+  handoffLoading,
+  onToggleSnapshot,
+  onReview,
+  onAskApproval,
+  onConfirmApproval,
+  onCancelApproval,
+  onGenerateHandoff,
+  onCopyToken,
+  onHideToken,
+}: {
+  execution: ApplicationExecution;
+  expanded: boolean;
+  busy: boolean;
+  confirmingApproval: boolean;
+  handoff: (ExtensionHandoff & { executionId: number }) | null;
+  handoffLoading: boolean;
+  onToggleSnapshot: () => void;
+  onReview: () => void;
+  onAskApproval: () => void;
+  onConfirmApproval: () => void;
+  onCancelApproval: () => void;
+  onGenerateHandoff: () => void;
+  onCopyToken: () => void;
+  onHideToken: () => void;
+}) {
+  const job = execution.job_snapshot;
+  const stage = getStage(execution);
+
+  const needsReview = execution.status === "prepared" && !execution.reviewed_at;
+  const readyToApprove =
+    execution.status === "prepared" && Boolean(execution.reviewed_at);
+  const approvedGreenhouse =
+    execution.status === "approved" && execution.ats_platform === "greenhouse";
+  const approvedManual =
+    execution.status === "approved" && execution.ats_platform !== "greenhouse";
+
+  const primaryBtn =
+    "rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50";
+  const secondaryBtn =
+    "rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50";
+
+  // One sentence telling the person exactly what to do next.
+  let nextStep: string;
+  if (needsReview) {
+    nextStep =
+      "Next: check the job, resume and cover letter in the snapshot, then mark it as reviewed.";
+  } else if (readyToApprove) {
+    nextStep =
+      "Next: approve the snapshot. Approving does not submit anything to the employer.";
+  } else if (approvedGreenhouse) {
+    nextStep =
+      "Next: generate a one-time token and paste it into the AI Applier Chrome extension to continue on the employer's site.";
+  } else if (approvedManual) {
+    nextStep = `Automatic submission is not available for this platform (${formatPlatform(execution.ats_platform)}). Open the application page and apply yourself.`;
+  } else if (execution.status === "submitting") {
+    nextStep = "Submission is in progress. Use Refresh to see the latest status.";
+  } else if (execution.status === "submitted") {
+    nextStep = execution.submission_reference
+      ? `Submitted. Reference: ${execution.submission_reference}`
+      : "Submitted.";
+  } else {
+    nextStep = execution.failure_reason || "Something went wrong with this application.";
+  }
+
+  return (
+    <article className="rounded-xl border border-slate-200 p-4 sm:p-5">
+      {/* Header */}
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h3 className="font-bold text-slate-900">
+            {snapshotText(job.title)}
+          </h3>
+          <p className="mt-1 text-sm font-medium text-slate-600">
+            {snapshotText(job.company)}
+            <span className="text-slate-400">
+              {" "}
+              · Prepared {new Date(execution.created_at).toLocaleDateString()} ·
+              Execution #{execution.id}
+            </span>
+          </p>
+        </div>
+        <span
+          className={`shrink-0 rounded-full px-3 py-1 text-xs font-semibold ${stage.style}`}
+        >
+          {stage.label}
+        </span>
+      </div>
+
+      <StepTracker execution={execution} />
+
+      {/* What to do next */}
+      <p
+        className={`mt-4 rounded-lg px-3 py-2.5 text-sm leading-6 ${
+          execution.status === "failed" || execution.status === "needs_attention"
+            ? "bg-red-50 text-red-700"
+            : execution.status === "submitted"
+              ? "bg-emerald-50 text-emerald-800"
+              : "bg-slate-50 text-slate-700"
+        }`}
+      >
+        {nextStep}
+      </p>
+
+      {execution.ats_platform === "unsupported" && (
+        <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-4">
+          <p className="text-sm font-semibold text-amber-900">
+            Unsupported application platform
+          </p>
+          <p className="mt-1 text-sm leading-6 text-amber-800">
+            We have not identified a supported integration for this job. You can
+            still review and approve the snapshot, but approval does not enable
+            automatic submission.
+          </p>
+        </div>
+      )}
+
+      {/* Actions: one primary action for the current step */}
+      <div className="mt-4 flex flex-wrap gap-2">
+        {needsReview && !expanded && (
+          <button
+            type="button"
+            onClick={onToggleSnapshot}
+            className={primaryBtn}
+          >
+            Review snapshot
+          </button>
+        )}
+
+        {needsReview && expanded && (
+          <button
+            type="button"
+            onClick={onReview}
+            disabled={busy}
+            className={primaryBtn}
+          >
+            {busy ? "Please wait..." : "Mark as reviewed"}
+          </button>
+        )}
+
+        {readyToApprove && (
+          <button
+            type="button"
+            onClick={onAskApproval}
+            disabled={busy || confirmingApproval}
+            className={primaryBtn}
+          >
+            Approve snapshot
+          </button>
+        )}
+
+        {approvedGreenhouse && (
+          <button
+            type="button"
+            onClick={onGenerateHandoff}
+            disabled={handoffLoading}
+            className={primaryBtn}
+          >
+            {handoffLoading ? "Generating token..." : "Generate extension token"}
+          </button>
+        )}
+
+        {approvedManual && (
+          <a
+            href={execution.target_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={primaryBtn}
+          >
+            Open application page
+          </a>
+        )}
+
+        {!(needsReview && !expanded) && (
+          <button
+            type="button"
+            onClick={onToggleSnapshot}
+            aria-expanded={expanded}
+            className={secondaryBtn}
+          >
+            {expanded ? "Hide snapshot" : "View snapshot"}
+          </button>
+        )}
+      </div>
+
+      {/* Approval confirmation */}
+      {confirmingApproval && readyToApprove && (
+        <div className="mt-4 rounded-xl border border-violet-200 bg-violet-50 p-4">
+          <h4 className="text-sm font-bold text-violet-950">
+            Approve this snapshot?
+          </h4>
+          <p className="mt-2 text-sm leading-6 text-violet-900">
+            You are approving the saved job, resume and cover letter for
+            Execution #{execution.id}. This does not submit an application or
+            contact the employer.
+          </p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={onConfirmApproval}
+              disabled={busy}
+              className={primaryBtn}
+            >
+              {busy ? "Please wait..." : "Yes, approve"}
+            </button>
+            <button
+              type="button"
+              onClick={onCancelApproval}
+              disabled={busy}
+              className="rounded-lg border border-violet-200 px-4 py-2 text-sm font-semibold text-violet-800 hover:bg-white disabled:opacity-50"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Extension token */}
+      {handoff?.executionId === execution.id && (
+        <div className="mt-4 rounded-xl border border-violet-200 bg-violet-50 p-4">
+          <h4 className="text-sm font-bold text-violet-950">
+            One-time extension token
+          </h4>
+          <p className="mt-1 text-sm text-violet-800">
+            Expires {new Date(handoff.expires_at).toLocaleString()}
+          </p>
+          <code className="mt-3 block overflow-x-auto break-all rounded-lg bg-white p-3 text-sm text-slate-800">
+            {handoff.token}
+          </code>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button type="button" onClick={onCopyToken} className={primaryBtn}>
+              Copy token
+            </button>
+            <button
+              type="button"
+              onClick={onHideToken}
+              className="rounded-lg border border-violet-200 px-4 py-2 text-sm font-semibold text-violet-800 hover:bg-white"
+            >
+              Hide token
+            </button>
+          </div>
+          <p className="mt-3 text-xs leading-5 text-violet-800">
+            Paste this token into the AI Applier Chrome extension. It works
+            once and is not shown again after you hide it. Do not share it.
+          </p>
+        </div>
+      )}
+
+      {/* Timeline */}
+      <div className="mt-4 space-y-1 text-xs">
+        {execution.reviewed_at && (
+          <p className="text-emerald-700">
+            Reviewed {new Date(execution.reviewed_at).toLocaleString()}
+          </p>
+        )}
+        {execution.approved_at && (
+          <p className="text-violet-700">
+            Approved {new Date(execution.approved_at).toLocaleString()}. This
+            does not mean the application was submitted.
+          </p>
+        )}
+        {execution.submitted_at && (
+          <p className="text-emerald-700">
+            Submitted {new Date(execution.submitted_at).toLocaleString()}
+          </p>
+        )}
+      </div>
+
+      {/* Snapshot */}
+      {expanded && (
+        <div className="mt-5 space-y-5 rounded-xl border border-slate-200 p-4">
+          <section>
+            <h4 className="text-sm font-bold text-slate-900">Job</h4>
+            <dl className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
+              {(
+                [
+                  ["Title", job.title],
+                  ["Company", job.company],
+                  ["Location", job.location],
+                  ["Employment type", job.employment_type],
+                  ["Remote type", job.remote_type],
+                  ["Source", job.source_name],
+                  ["Eligible countries", job.eligible_countries],
+                  ["Eligibility status", job.eligibility_status],
+                  ["Application platform", formatPlatform(execution.ats_platform)],
+                ] as [string, unknown][]
+              ).map(([label, value]) => (
+                <div key={label}>
+                  <dt className="text-xs font-medium text-slate-400">
+                    {label}
+                  </dt>
+                  <dd className="mt-1 break-words text-slate-700">
+                    {snapshotText(value)}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+
+            <div className="mt-4">
+              <p className="text-xs font-medium text-slate-400">
+                Application page
+              </p>
+              <a
+                href={execution.target_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-1 block break-all text-sm font-medium text-violet-700 hover:underline"
+              >
+                {execution.target_url}
+              </a>
+            </div>
+
+            <div className="mt-4">
+              <h5 className="text-xs font-medium text-slate-400">
+                Job description
+              </h5>
+              <div className="mt-2 max-h-72 overflow-y-auto rounded-lg bg-slate-50 p-3 text-sm leading-6 whitespace-pre-wrap text-slate-700">
+                {snapshotText(job.description)}
+              </div>
+            </div>
+
+            {(job.eligibility_evidence != null ||
+              typeof job.eligibility_evidence_url === "string") && (
+              <div className="mt-3 rounded-lg bg-slate-50 p-3 text-sm">
+                <p className="font-semibold text-slate-700">
+                  Eligibility evidence
+                </p>
+                {job.eligibility_evidence != null && (
+                  <p className="mt-1 whitespace-pre-wrap text-slate-600">
+                    {snapshotText(job.eligibility_evidence)}
+                  </p>
+                )}
+                {typeof job.eligibility_evidence_url === "string" && (
+                  <a
+                    href={job.eligibility_evidence_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="mt-2 block break-all text-violet-700 hover:underline"
+                  >
+                    View eligibility evidence
+                  </a>
+                )}
+              </div>
+            )}
+          </section>
+
+          <section className="border-t border-slate-100 pt-4">
+            <h4 className="text-sm font-bold text-slate-900">Resume</h4>
+            <p className="mt-2 text-sm break-words text-slate-700">
+              {execution.resume_filename_snapshot || "Not available"}
+            </p>
+            <p className="mt-2 text-xs text-slate-400">SHA-256 fingerprint</p>
+            <code className="mt-1 block rounded-lg bg-slate-50 p-3 text-xs break-all text-slate-600">
+              {execution.resume_sha256 || "Not available"}
+            </code>
+            <p className="mt-2 text-xs text-slate-500">
+              The fingerprint identifies the resume file captured when this
+              application was prepared.
+            </p>
+          </section>
+
+          <section className="border-t border-slate-100 pt-4">
+            <h4 className="text-sm font-bold text-slate-900">Cover letter</h4>
+            {execution.cover_letter_snapshot ? (
+              <div className="mt-2 max-h-72 overflow-y-auto rounded-lg bg-slate-50 p-3 text-sm leading-6 whitespace-pre-wrap text-slate-700">
+                {execution.cover_letter_snapshot}
+              </div>
+            ) : (
+              <p className="mt-2 text-sm text-slate-500">
+                No cover letter was included.
+              </p>
+            )}
+          </section>
+
+          <section className="border-t border-slate-100 pt-4">
+            <h4 className="text-sm font-bold text-slate-900">
+              Application data
+            </h4>
+            <p className="mt-1 text-xs text-slate-500">
+              Exactly what was saved for this application. No candidate answers
+              have been invented.
+            </p>
+            <pre className="mt-3 max-h-96 overflow-auto rounded-lg bg-slate-950 p-4 text-xs leading-5 break-words whitespace-pre-wrap text-slate-100">
+              {JSON.stringify(execution.application_payload, null, 2)}
+            </pre>
+          </section>
+        </div>
+      )}
+    </article>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Main component                                                            */
+/* -------------------------------------------------------------------------- */
+
+export default function ApplicationExecutions({ onNavigate }: Props) {
   const { isLoaded, isSignedIn, getToken } = useAuth();
 
   const [applications, setApplications] = useState<Application[]>([]);
   const [resumes, setResumes] = useState<Resume[]>([]);
   const [drafts, setDrafts] = useState<CoverLetterDraft[]>([]);
   const [executions, setExecutions] = useState<ApplicationExecution[]>([]);
+  const [jobsById, setJobsById] = useState<Record<number, JobSummary>>({});
+  const jobsCache = useRef<Record<number, JobSummary>>({});
 
   const [applicationId, setApplicationId] = useState("");
   const [resumeId, setResumeId] = useState("");
   const [draftId, setDraftId] = useState("");
 
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [showForm, setShowForm] = useState(true);
+  const [filter, setFilter] = useState<Filter>("all");
+  const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
   const [actionId, setActionId] = useState<number | null>(null);
-  const [confirmApprovalId, setConfirmApprovalId] = useState<number | null>(null);
+  const [confirmApprovalId, setConfirmApprovalId] = useState<number | null>(
+    null,
+  );
   const [handoff, setHandoff] = useState<
     (ExtensionHandoff & { executionId: number }) | null
   >(null);
@@ -141,7 +693,15 @@ export default function ApplicationExecutions() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
-  const loadData = useCallback(async () => {
+  // Reuse one idempotency key for identical form input, so a retry or a
+  // double-click cannot create duplicate executions.
+  const idempotency = useRef<{ signature: string; key: string } | null>(null);
+
+  /* ------------------------------------------------------------------------ */
+  /*  Data                                                                    */
+  /* ------------------------------------------------------------------------ */
+
+  const loadData = useCallback(async (): Promise<number> => {
     const token = await getToken();
 
     if (!token) {
@@ -162,16 +722,44 @@ export default function ApplicationExecutions() {
         ),
       ]);
 
+    // Look up job titles so people see "Backend Developer · Acme", not "Job #34".
+    const missingJobIds = [
+      ...new Set(loadedApplications.map((item) => item.job_id)),
+    ].filter((id) => !(id in jobsCache.current));
+
+    const lookups = await Promise.allSettled(
+      missingJobIds.map((id) =>
+        apiRequest<{ id: number; title: string; company: string }>(
+          `/api/jobs/${id}`,
+          token,
+        ),
+      ),
+    );
+
+    for (const result of lookups) {
+      if (result.status === "fulfilled") {
+        jobsCache.current[result.value.id] = {
+          title: result.value.title,
+          company: result.value.company,
+        };
+      }
+    }
+
+    setJobsById({ ...jobsCache.current });
     setApplications(loadedApplications);
     setResumes(loadedResumes);
     setDrafts(loadedDrafts);
     setExecutions(loadedExecutions);
 
+    const selectable = loadedApplications.filter(
+      (item) => item.status !== "rejected",
+    );
+
     setApplicationId((current) =>
-      current && loadedApplications.some((item) => String(item.id) === current)
+      current && selectable.some((item) => String(item.id) === current)
         ? current
-        : loadedApplications[0]
-          ? String(loadedApplications[0].id)
+        : selectable[0]
+          ? String(selectable[0].id)
           : "",
     );
 
@@ -182,6 +770,8 @@ export default function ApplicationExecutions() {
           ? String(loadedResumes[0].id)
           : "",
     );
+
+    return loadedExecutions.length;
   }, [getToken]);
 
   useEffect(() => {
@@ -194,7 +784,10 @@ export default function ApplicationExecutions() {
       setError("");
 
       try {
-        await loadData();
+        const count = await loadData();
+        // First visit with nothing prepared yet: open the form. Otherwise
+        // show the list first and keep the form one click away.
+        if (!cancelled) setShowForm(count === 0);
       } catch (err) {
         if (!cancelled) {
           setError(
@@ -215,17 +808,90 @@ export default function ApplicationExecutions() {
     };
   }, [isLoaded, isSignedIn, loadData]);
 
-  const availableDrafts = drafts.filter(
-    (draft) => String(draft.application_id) === applicationId,
+  /* ------------------------------------------------------------------------ */
+  /*  Derived                                                                 */
+  /* ------------------------------------------------------------------------ */
+
+  const selectableApplications = useMemo(
+    () => applications.filter((item) => item.status !== "rejected"),
+    [applications],
   );
 
-  async function prepareExecution(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  const availableDrafts = useMemo(
+    () =>
+      drafts.filter((draft) => String(draft.application_id) === applicationId),
+    [drafts, applicationId],
+  );
+
+  const existingForApplication = useMemo(
+    () =>
+      executions.filter(
+        (item) => String(item.application_id) === applicationId,
+      ),
+    [executions, applicationId],
+  );
+
+  const counts = useMemo(() => {
+    const result = { all: executions.length, todo: 0, submitted: 0, issues: 0 };
+    for (const item of executions) result[filterOf(item)] += 1;
+    return result;
+  }, [executions]);
+
+  const visibleExecutions = useMemo(
+    () =>
+      filter === "all"
+        ? executions
+        : executions.filter((item) => filterOf(item) === filter),
+    [executions, filter],
+  );
+
+  function applicationLabel(application: Application): string {
+    const job = jobsById[application.job_id];
+    const name = job
+      ? `${job.title} · ${job.company}`
+      : `Job #${application.job_id}`;
+    return `${name} (${application.status})`;
+  }
+
+  /* ------------------------------------------------------------------------ */
+  /*  Actions                                                                 */
+  /* ------------------------------------------------------------------------ */
+
+  function clearMessages() {
     setError("");
     setNotice("");
+  }
+
+  function toggleSnapshot(executionId: number) {
+    setExpandedIds((current) => {
+      const next = new Set(current);
+      if (next.has(executionId)) next.delete(executionId);
+      else next.add(executionId);
+      return next;
+    });
+  }
+
+  async function refresh() {
+    clearMessages();
+    setRefreshing(true);
+
+    try {
+      await loadData();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Refresh failed.");
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
+  async function prepareExecution(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (saving) return;
+
+    clearMessages();
 
     if (!applicationId || !resumeId) {
-      setError("Select an application and a resume first.");
+      setError("Choose an application and a resume first.");
       return;
     }
 
@@ -236,16 +902,17 @@ export default function ApplicationExecutions() {
 
       if (!token) throw new Error("Please sign in again.");
 
-      const idempotencyKey = crypto.randomUUID();
+      const signature = `${applicationId}:${resumeId}:${draftId}`;
+      if (idempotency.current?.signature !== signature) {
+        idempotency.current = { signature, key: crypto.randomUUID() };
+      }
 
       const created = await apiRequest<ApplicationExecution>(
         "/api/application-executions/prepare",
         token,
         {
           method: "POST",
-          headers: {
-            "Idempotency-Key": idempotencyKey,
-          },
+          headers: { "Idempotency-Key": idempotency.current.key },
           body: JSON.stringify({
             application_id: Number(applicationId),
             resume_id: Number(resumeId),
@@ -254,13 +921,21 @@ export default function ApplicationExecutions() {
         },
       );
 
+      idempotency.current = null;
+
       setExecutions((current) => [
         created,
         ...current.filter((item) => item.id !== created.id),
       ]);
 
-      setNotice(`Execution #${created.id} prepared successfully.`);
+      // Take the person straight to the next step: reviewing the new snapshot.
+      setFilter("all");
+      setExpandedIds((current) => new Set(current).add(created.id));
+      setShowForm(false);
       setDraftId("");
+      setNotice(
+        "Application prepared. Check the snapshot below, then mark it as reviewed.",
+      );
     } catch (err) {
       setError(
         err instanceof Error
@@ -276,8 +951,7 @@ export default function ApplicationExecutions() {
     executionId: number,
     action: "review" | "approve",
   ) {
-    setError("");
-    setNotice("");
+    clearMessages();
     setActionId(executionId);
 
     try {
@@ -295,16 +969,17 @@ export default function ApplicationExecutions() {
         current.map((item) => (item.id === updated.id ? updated : item)),
       );
 
-      setNotice(
-        action === "review"
-          ? `Execution #${executionId} marked as reviewed.`
-          : `Execution #${executionId} approved. No application was submitted.`,
-      );
+      if (action === "review") {
+        setNotice("Marked as reviewed. You can now approve the snapshot.");
+      } else {
+        setConfirmApprovalId(null);
+        setNotice("Snapshot approved. Nothing has been submitted yet.");
+      }
     } catch (err) {
       setError(
         err instanceof Error
           ? err.message
-          : `Could not ${action} this execution.`,
+          : `Could not ${action} this application.`,
       );
     } finally {
       setActionId(null);
@@ -312,8 +987,7 @@ export default function ApplicationExecutions() {
   }
 
   async function generateExtensionHandoff(executionId: number) {
-    setError("");
-    setNotice("");
+    clearMessages();
     setHandoff(null);
     setHandoffLoadingId(executionId);
 
@@ -329,19 +1003,34 @@ export default function ApplicationExecutions() {
       );
 
       setHandoff({ ...issued, executionId });
-      setNotice(
-        `One-time extension token created for Execution #${executionId}.`,
-      );
+      setNotice("One-time extension token created. Copy it into the extension.");
     } catch (err) {
       setError(
         err instanceof Error
           ? err.message
-          : "Could not create an extension handoff token.",
+          : "Could not create an extension token.",
       );
     } finally {
       setHandoffLoadingId(null);
     }
   }
+
+  async function copyToken() {
+    if (!handoff) return;
+
+    try {
+      await navigator.clipboard.writeText(handoff.token);
+      setError("");
+      setNotice("Extension token copied to clipboard.");
+    } catch {
+      setNotice("");
+      setError("Could not copy the token. Select it and copy it manually.");
+    }
+  }
+
+  /* ------------------------------------------------------------------------ */
+  /*  Render                                                                  */
+  /* ------------------------------------------------------------------------ */
 
   if (!isLoaded) {
     return <p className="text-sm text-slate-500">Loading authentication...</p>;
@@ -355,25 +1044,106 @@ export default function ApplicationExecutions() {
     );
   }
 
+  const filters: { key: Filter; label: string }[] = [
+    { key: "all", label: "All" },
+    { key: "todo", label: "To do" },
+    { key: "submitted", label: "Submitted" },
+    { key: "issues", label: "Needs attention" },
+  ];
+
+  const linkBtn =
+    "font-semibold text-violet-700 underline underline-offset-2 hover:text-violet-900";
+
   return (
     <div className="space-y-6">
+      {/* How it works */}
       <section className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-7">
-        <div className="mb-5">
-          <h2 className="text-lg font-bold text-slate-900">
-            Prepare an application
-          </h2>
-          <p className="mt-1 text-sm leading-6 text-slate-500">
-            Create a saved application snapshot using your selected resume and
-            optional cover letter. Nothing is submitted to an employer.
-          </p>
+        <h2 className="text-lg font-bold text-slate-900">
+          How preparing an application works
+        </h2>
+        <ol className="mt-4 grid gap-3 text-sm sm:grid-cols-4">
+          {[
+            ["1. Prepare", "Pick a saved job, a resume and an optional cover letter."],
+            ["2. Review", "Check the saved snapshot and mark it as reviewed."],
+            ["3. Approve", "Confirm the snapshot. Nothing is sent yet."],
+            ["4. Submit", "Continue on the employer's site with the Chrome extension."],
+          ].map(([title, text]) => (
+            <li key={title} className="rounded-xl bg-slate-50 p-3">
+              <p className="font-semibold text-slate-800">{title}</p>
+              <p className="mt-1 text-xs leading-5 text-slate-500">{text}</p>
+            </li>
+          ))}
+        </ol>
+      </section>
+
+      {/* Messages */}
+      {error && (
+        <div
+          role="alert"
+          className="flex items-start justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
+        >
+          <span className="min-w-0">{error}</span>
+          <button
+            type="button"
+            onClick={() => setError("")}
+            aria-label="Dismiss error"
+            className="shrink-0 font-bold"
+          >
+            ×
+          </button>
+        </div>
+      )}
+
+      {notice && (
+        <div
+          role="status"
+          className="flex items-start justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700"
+        >
+          <span className="min-w-0">{notice}</span>
+          <button
+            type="button"
+            onClick={() => setNotice("")}
+            aria-label="Dismiss message"
+            className="shrink-0 font-bold"
+          >
+            ×
+          </button>
+        </div>
+      )}
+
+      {/* Step 1: prepare */}
+      <section className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-7">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-bold text-slate-900">
+              Prepare an application
+            </h2>
+            <p className="mt-1 text-sm leading-6 text-slate-500">
+              Saves a snapshot of the job, your resume and an optional cover
+              letter. Nothing is submitted to an employer.
+            </p>
+          </div>
+
+          {!loading && (
+            <button
+              type="button"
+              onClick={() => setShowForm((visible) => !visible)}
+              aria-expanded={showForm}
+              className="rounded-xl border border-violet-200 px-4 py-2 text-sm font-semibold text-violet-700 hover:bg-violet-50"
+            >
+              {showForm ? "Close" : "Prepare an application"}
+            </button>
+          )}
         </div>
 
-        {loading ? (
-          <p className="text-sm text-slate-500">Loading your documents...</p>
-        ) : (
-          <form onSubmit={prepareExecution} className="space-y-4">
+        {loading && (
+          <p className="mt-4 text-sm text-slate-500">Loading your documents...</p>
+        )}
+
+        {!loading && showForm && (
+          <form onSubmit={prepareExecution} className="mt-5 space-y-4">
             <label className="block text-sm font-semibold text-slate-700">
-              Saved application
+              Job
               <select
                 value={applicationId}
                 onChange={(event) => {
@@ -381,17 +1151,43 @@ export default function ApplicationExecutions() {
                   setDraftId("");
                 }}
                 required
+                disabled={saving || selectableApplications.length === 0}
                 className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 font-normal"
               >
-                <option value="">Select an application</option>
-                {applications.map((application) => (
+                <option value="">Choose a saved job</option>
+                {selectableApplications.map((application) => (
                   <option key={application.id} value={application.id}>
-                    Application #{application.id} · Job #{application.job_id} ·{" "}
-                    {application.status}
+                    {applicationLabel(application)}
                   </option>
                 ))}
               </select>
             </label>
+
+            {selectableApplications.length === 0 && (
+              <p className="text-sm text-amber-700">
+                You have no saved jobs yet.{" "}
+                {onNavigate ? (
+                  <button
+                    type="button"
+                    onClick={() => onNavigate("Find Jobs")}
+                    className={linkBtn}
+                  >
+                    Find a job to save
+                  </button>
+                ) : (
+                  "Save a job to your pipeline first."
+                )}
+              </p>
+            )}
+
+            {existingForApplication.length > 0 && (
+              <p className="rounded-lg bg-amber-50 px-3 py-2.5 text-sm text-amber-800">
+                You already prepared this job (Execution #
+                {existingForApplication[0].id},{" "}
+                {getStage(existingForApplication[0]).label.toLowerCase()}).
+                Preparing again creates a new snapshot.
+              </p>
+            )}
 
             <label className="block text-sm font-semibold text-slate-700">
               Resume
@@ -399,9 +1195,10 @@ export default function ApplicationExecutions() {
                 value={resumeId}
                 onChange={(event) => setResumeId(event.target.value)}
                 required
+                disabled={saving || resumes.length === 0}
                 className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 font-normal"
               >
-                <option value="">Select a resume</option>
+                <option value="">Choose a resume</option>
                 {resumes.map((resume) => (
                   <option key={resume.id} value={resume.id}>
                     {resume.original_filename}
@@ -410,11 +1207,29 @@ export default function ApplicationExecutions() {
               </select>
             </label>
 
+            {resumes.length === 0 && (
+              <p className="text-sm text-amber-700">
+                You have no resumes yet.{" "}
+                {onNavigate ? (
+                  <button
+                    type="button"
+                    onClick={() => onNavigate("My Documents")}
+                    className={linkBtn}
+                  >
+                    Upload one in My Documents
+                  </button>
+                ) : (
+                  "Upload a resume in My Documents first."
+                )}
+              </p>
+            )}
+
             <label className="block text-sm font-semibold text-slate-700">
-              Cover-letter draft (optional)
+              Cover letter (optional)
               <select
                 value={draftId}
                 onChange={(event) => setDraftId(event.target.value)}
+                disabled={saving || !applicationId}
                 className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 font-normal"
               >
                 <option value="">No cover letter</option>
@@ -426,24 +1241,20 @@ export default function ApplicationExecutions() {
                 ))}
               </select>
               {applicationId && availableDrafts.length === 0 && (
-                <span className="mt-1 block text-xs font-normal text-slate-400">
-                  No cover-letter drafts are linked to this application.
+                <span className="mt-1 block text-xs font-normal text-slate-500">
+                  No cover letter drafts exist for this job.{" "}
+                  {onNavigate && (
+                    <button
+                      type="button"
+                      onClick={() => onNavigate("Cover Letter Drafts")}
+                      className={linkBtn}
+                    >
+                      Write one
+                    </button>
+                  )}
                 </span>
               )}
             </label>
-
-            {applications.length === 0 && (
-              <p className="text-sm text-amber-700">
-                Save a job to your application pipeline before preparing an
-                execution.
-              </p>
-            )}
-
-            {resumes.length === 0 && (
-              <p className="text-sm text-amber-700">
-                Upload a resume in My Documents before preparing an execution.
-              </p>
-            )}
 
             <button
               type="submit"
@@ -456,408 +1267,87 @@ export default function ApplicationExecutions() {
         )}
       </section>
 
-      {error && (
-        <p
-          role="alert"
-          className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
-        >
-          {error}
-        </p>
-      )}
-
-      {notice && (
-        <p
-          role="status"
-          className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700"
-        >
-          {notice}
-        </p>
-      )}
-
+      {/* Steps 2-4: review, approve, submit */}
       <section className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-7">
         <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 className="text-lg font-bold text-slate-900">
-              Prepared applications
+              Your prepared applications
             </h2>
             <p className="mt-1 text-sm text-slate-500">
-              Review each snapshot before explicitly approving it.
+              Each card shows its progress and the next thing to do.
             </p>
           </div>
 
           <button
             type="button"
-            onClick={() => {
-              setLoading(true);
-              void loadData()
-                .catch((err) =>
-                  setError(
-                    err instanceof Error ? err.message : "Refresh failed.",
-                  ),
-                )
-                .finally(() => setLoading(false));
-            }}
-            disabled={loading}
+            onClick={() => void refresh()}
+            disabled={loading || refreshing}
             className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-50"
           >
-            Refresh
+            {refreshing ? "Refreshing..." : "Refresh"}
           </button>
         </div>
 
+        {!loading && executions.length > 0 && (
+          <div
+            role="group"
+            aria-label="Filter prepared applications"
+            className="mb-5 flex flex-wrap gap-2"
+          >
+            {filters.map(({ key, label }) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setFilter(key)}
+                aria-pressed={filter === key}
+                className={`rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${
+                  filter === key
+                    ? "bg-violet-600 text-white"
+                    : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                }`}
+              >
+                {label} ({counts[key]})
+              </button>
+            ))}
+          </div>
+        )}
+
         {loading ? (
-          <p className="text-sm text-slate-500">Loading executions...</p>
+          <p className="text-sm text-slate-500">Loading prepared applications...</p>
         ) : executions.length === 0 ? (
           <p className="rounded-xl bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
-            No application executions yet. Prepare one above to get started.
+            Nothing prepared yet. Use “Prepare an application” above to start.
+          </p>
+        ) : visibleExecutions.length === 0 ? (
+          <p className="rounded-xl bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
+            No applications match this filter.
           </p>
         ) : (
           <div className="space-y-4">
-            {executions.map((execution) => {
-              const canReview = execution.status === "prepared";
-              const canApprove =
-                execution.status === "prepared" && Boolean(execution.reviewed_at);
-              const job = execution.job_snapshot;
-
-              return (
-                <article
-                  key={execution.id}
-                  className="rounded-xl border border-slate-200 p-4 sm:p-5"
-                >
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                      <h3 className="font-bold text-slate-900">
-                        Execution #{execution.id}
-                      </h3>
-                      <p className="mt-1 text-sm font-medium text-slate-600">
-                        {snapshotText(job.title)} · {snapshotText(job.company)}
-                      </p>
-                    </div>
-                    <span
-                      className={`rounded-full px-3 py-1 text-xs font-semibold ${statusStyles[execution.status]}`}
-                    >
-                      {execution.status.replace("_", " ")}
-                    </span>
-                  </div>
-
-                  <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
-                    <div>
-                      <dt className="text-slate-400">Application</dt>
-                      <dd className="font-medium text-slate-700">
-                        #{execution.application_id}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt className="text-slate-400">Resume snapshot</dt>
-                      <dd className="font-medium text-slate-700">
-                        {execution.resume_filename_snapshot || "Not available"}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt className="text-slate-400">ATS platform</dt>
-                      <dd className="font-medium text-slate-700">
-                        {execution.ats_platform}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt className="text-slate-400">Created</dt>
-                      <dd className="font-medium text-slate-700">
-                        {new Date(execution.created_at).toLocaleString()}
-                      </dd>
-                    </div>
-                  </dl>
-
-                  <div className="mt-4">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-                      Target application URL
-                    </p>
-                    <a
-                      href={execution.target_url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="mt-1 block break-all text-sm font-medium text-violet-700 hover:underline"
-                    >
-                      {execution.target_url}
-                    </a>
-                  </div>
-
-                  {execution.ats_platform === "unsupported" && (
-                    <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
-                      <p className="text-sm font-semibold text-amber-900">
-                        Unsupported application platform
-                      </p>
-                      <p className="mt-1 text-sm leading-6 text-amber-800">
-                        We have not identified a supported ATS integration for
-                        this job. This snapshot can be reviewed and approved,
-                        but approval does not enable automatic submission.
-                      </p>
-                    </div>
-                  )}
-
-                  <details className="mt-5 rounded-xl border border-slate-200">
-                    <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-slate-800 hover:bg-slate-50">
-                      Review complete application snapshot
-                    </summary>
-
-                    <div className="space-y-5 border-t border-slate-200 p-4">
-                      <section>
-                        <h4 className="text-sm font-bold text-slate-900">
-                          Job information
-                        </h4>
-                        <dl className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
-                          {([
-                            ["Title", job.title],
-                            ["Company", job.company],
-                            ["Location", job.location],
-                            ["Employment type", job.employment_type],
-                            ["Remote type", job.remote_type],
-                            ["Source", job.source_name],
-                            ["Eligible countries", job.eligible_countries],
-                            ["Eligibility status", job.eligibility_status],
-                          ] as [string, unknown][]).map(([label, value]) => (
-                            <div key={label}>
-                              <dt className="text-xs font-medium text-slate-400">
-                                {label}
-                              </dt>
-                              <dd className="mt-1 break-words text-slate-700">
-                                {snapshotText(value)}
-                              </dd>
-                            </div>
-                          ))}
-                        </dl>
-
-                        <div className="mt-4">
-                          <h5 className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-                            Job description snapshot
-                          </h5>
-                          <div className="mt-2 max-h-72 overflow-y-auto whitespace-pre-wrap rounded-lg bg-slate-50 p-3 text-sm leading-6 text-slate-700">
-                            {snapshotText(job.description)}
-                          </div>
-                        </div>
-
-                        {(job.eligibility_evidence != null ||
-                          typeof job.eligibility_evidence_url === "string") && (
-                          <div className="mt-3 rounded-lg bg-slate-50 p-3 text-sm">
-                            <p className="font-semibold text-slate-700">
-                              Eligibility evidence
-                            </p>
-                            {job.eligibility_evidence != null && (
-                              <p className="mt-1 whitespace-pre-wrap text-slate-600">
-                                {snapshotText(job.eligibility_evidence)}
-                              </p>
-                            )}
-                            {typeof job.eligibility_evidence_url === "string" && (
-                              <a
-                                href={job.eligibility_evidence_url}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="mt-2 block break-all text-violet-700 hover:underline"
-                              >
-                                View eligibility evidence
-                              </a>
-                            )}
-                          </div>
-                        )}
-                      </section>
-
-                      <section className="border-t border-slate-100 pt-4">
-                        <h4 className="text-sm font-bold text-slate-900">
-                          Resume snapshot
-                        </h4>
-                        <p className="mt-2 break-words text-sm text-slate-700">
-                          {execution.resume_filename_snapshot || "Not available"}
-                        </p>
-                        <p className="mt-2 text-xs text-slate-400">
-                          SHA-256 fingerprint
-                        </p>
-                        <code className="mt-1 block break-all rounded-lg bg-slate-50 p-3 text-xs text-slate-600">
-                          {execution.resume_sha256 || "Not available"}
-                        </code>
-                        <p className="mt-2 text-xs text-slate-500">
-                          The fingerprint identifies the resume file captured
-                          when this execution was prepared.
-                        </p>
-                      </section>
-
-                      <section className="border-t border-slate-100 pt-4">
-                        <h4 className="text-sm font-bold text-slate-900">
-                          Cover-letter snapshot
-                        </h4>
-                        {execution.cover_letter_snapshot ? (
-                          <div className="mt-2 max-h-72 overflow-y-auto whitespace-pre-wrap rounded-lg bg-slate-50 p-3 text-sm leading-6 text-slate-700">
-                            {execution.cover_letter_snapshot}
-                          </div>
-                        ) : (
-                          <p className="mt-2 text-sm text-slate-500">
-                            No cover letter was included in this snapshot.
-                          </p>
-                        )}
-                      </section>
-
-                      <section className="border-t border-slate-100 pt-4">
-                        <h4 className="text-sm font-bold text-slate-900">
-                          Application payload
-                        </h4>
-                        <p className="mt-1 text-xs text-slate-500">
-                          Exact saved data and references captured for this
-                          execution. No additional candidate answers have been
-                          invented.
-                        </p>
-                        <pre className="mt-3 max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-slate-950 p-4 text-xs leading-5 text-slate-100">
-                          {JSON.stringify(execution.application_payload, null, 2)}
-                        </pre>
-                      </section>
-                    </div>
-                  </details>
-
-                  {execution.failure_reason && (
-                    <p className="mt-3 text-sm text-red-600">
-                      {execution.failure_reason}
-                    </p>
-                  )}
-
-                  <div className="mt-5 flex flex-wrap gap-2">
-                    {canReview && (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          void updateExecution(execution.id, "review")
-                        }
-                        disabled={actionId === execution.id}
-                        className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-                      >
-                        {actionId === execution.id
-                          ? "Please wait..."
-                          : "Mark as reviewed"}
-                      </button>
-                    )}
-
-                    {canApprove && (
-                      <button
-                        type="button"
-                        onClick={() => setConfirmApprovalId(execution.id)}
-                        disabled={actionId === execution.id}
-                        className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-700 disabled:opacity-50"
-                      >
-                        {actionId === execution.id
-                          ? "Please wait..."
-                          : "Approve snapshot"}
-                      </button>
-                    )}
-
-                    {execution.status === "approved" &&
-                      execution.ats_platform === "greenhouse" && (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            void generateExtensionHandoff(execution.id)
-                          }
-                          disabled={handoffLoadingId === execution.id}
-                          className="rounded-lg border border-violet-300 px-4 py-2 text-sm font-semibold text-violet-700 hover:bg-violet-50 disabled:opacity-50"
-                        >
-                          {handoffLoadingId === execution.id
-                            ? "Generating token..."
-                            : "Generate extension token"}
-                        </button>
-                      )}
-                  </div>
-
-                  {handoff?.executionId === execution.id && (
-                    <div className="mt-4 rounded-xl border border-violet-200 bg-violet-50 p-4">
-                      <h4 className="text-sm font-bold text-violet-950">
-                        One-time extension token
-                      </h4>
-                      <p className="mt-1 text-sm text-violet-800">
-                        Expires:{" "}
-                        {new Date(handoff.expires_at).toLocaleString()}
-                      </p>
-                      <code className="mt-3 block overflow-x-auto break-all rounded-lg bg-white p-3 text-sm text-slate-800">
-                        {handoff.token}
-                      </code>
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          onClick={async () => {
-                            try {
-                              await navigator.clipboard.writeText(handoff.token);
-                              setNotice("Extension token copied to clipboard.");
-                            } catch {
-                              setError(
-                                "Could not copy the token. Select and copy it manually.",
-                              );
-                            }
-                          }}
-                          className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-700"
-                        >
-                          Copy token
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setHandoff(null)}
-                          className="rounded-lg border border-violet-200 px-4 py-2 text-sm font-semibold text-violet-800 hover:bg-white"
-                        >
-                          Hide token
-                        </button>
-                      </div>
-                      <p className="mt-3 text-xs leading-5 text-violet-800">
-                        Paste this token into the AI Applier Chrome extension.
-                        It can be used once. Do not share it.
-                      </p>
-                    </div>
-                  )}
-
-                  {confirmApprovalId === execution.id && canApprove && (
-                    <div className="mt-4 rounded-xl border border-violet-200 bg-violet-50 p-4">
-                      <h4 className="text-sm font-bold text-violet-950">
-                        Confirm snapshot approval
-                      </h4>
-                      <p className="mt-2 text-sm leading-6 text-violet-900">
-                        You are approving the saved job, resume and cover-letter
-                        snapshot for Execution #{execution.id}. This action does
-                        not submit an application or contact the employer.
-                      </p>
-                      <div className="mt-4 flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setConfirmApprovalId(null);
-                            void updateExecution(execution.id, "approve");
-                          }}
-                          disabled={actionId === execution.id}
-                          className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-700 disabled:opacity-50"
-                        >
-                          {actionId === execution.id
-                            ? "Please wait..."
-                            : "Confirm approval"}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setConfirmApprovalId(null)}
-                          disabled={actionId === execution.id}
-                          className="rounded-lg border border-violet-200 px-4 py-2 text-sm font-semibold text-violet-800 hover:bg-white disabled:opacity-50"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  {execution.reviewed_at && (
-                    <p className="mt-3 text-xs text-emerald-700">
-                      Reviewed{" "}
-                      {new Date(execution.reviewed_at).toLocaleString()}
-                    </p>
-                  )}
-
-                  {execution.approved_at && (
-                    <p className="mt-1 text-xs text-violet-700">
-                      Approved{" "}
-                      {new Date(execution.approved_at).toLocaleString()}. This
-                      does not mean the application was submitted.
-                    </p>
-                  )}
-                </article>
-              );
-            })}
+            {visibleExecutions.map((execution) => (
+              <ExecutionCard
+                key={execution.id}
+                execution={execution}
+                expanded={expandedIds.has(execution.id)}
+                busy={actionId === execution.id}
+                confirmingApproval={confirmApprovalId === execution.id}
+                handoff={handoff}
+                handoffLoading={handoffLoadingId === execution.id}
+                onToggleSnapshot={() => toggleSnapshot(execution.id)}
+                onReview={() => void updateExecution(execution.id, "review")}
+                onAskApproval={() => setConfirmApprovalId(execution.id)}
+                onConfirmApproval={() =>
+                  void updateExecution(execution.id, "approve")
+                }
+                onCancelApproval={() => setConfirmApprovalId(null)}
+                onGenerateHandoff={() =>
+                  void generateExtensionHandoff(execution.id)
+                }
+                onCopyToken={() => void copyToken()}
+                onHideToken={() => setHandoff(null)}
+              />
+            ))}
           </div>
         )}
       </section>
