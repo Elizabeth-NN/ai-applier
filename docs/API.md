@@ -69,3 +69,57 @@ The user interface labels these as Saved, Applied, Interview, Rejected, and Offe
 - [ ] Inspect `backend/app/models/`.
 - [ ] Review `/docs` and `/openapi.json` in local development.
 - [ ] Add tests for authentication, ownership, validation, missing records, duplicates, and status updates.
+
+## Application execution routes
+
+The application-execution API supports preparation and a human-controlled
+execution lifecycle. These routes require authentication and enforce ownership.
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/api/application-executions/prepare` | Prepare an application execution; accepts an `Idempotency-Key` header |
+| GET | `/api/application-executions` | List the authenticated user's executions |
+| POST | `/api/application-executions/{execution_id}/review` | Record candidate review of a prepared execution |
+| POST | `/api/application-executions/{execution_id}/approve` | Approve a reviewed execution |
+| POST | `/api/application-executions/{execution_id}/start` | Record the start of a genuine submission attempt |
+| POST | `/api/application-executions/{execution_id}/complete` | Record a confirmed submission outcome |
+| POST | `/api/application-executions/{execution_id}/fail` | Record a failed submission attempt |
+| POST | `/api/application-executions/{execution_id}/needs-attention` | Flag an uncertain outcome for human follow-up |
+
+Preparation stores a snapshot of the application data. Review and approval
+do not submit an application. Starting an execution records an attempt but
+does not itself contact an employer or submit an external form.
+
+Completion records a reported or trusted confirmation; it does not
+independently verify the employer's system. An uncertain result must not be
+reported as submitted.
+
+The execution lifecycle is separate from application tracking status.
+Only a confirmed completion may move a linked application from `saved` to
+`applied`; later tracking statuses must be preserved.
+
+## Planned Chrome extension handoff routes
+
+**Status: Planned — not implemented.**
+
+The following routes are architectural proposals, not available API endpoints:
+
+| Method | Proposed path | Purpose |
+|---|---|---|
+| POST | `/api/application-executions/{execution_id}/extension-handoff` | Issue a short-lived, single-use credential for an owned, approved execution |
+| POST | `/api/extension-handoffs/redeem` | Redeem the opaque credential and retrieve the permitted application snapshot |
+
+The issuance endpoint will require the authenticated candidate's identity
+and verify execution ownership and approval. The redemption endpoint is
+intended to use the opaque handoff credential rather than a Clerk session
+token.
+
+The backend should store only a hash of the credential and atomically enforce
+expiry and single-use redemption. Replacing a handoff must invalidate the
+previous unredeemed credential. Exact request and response schemas, status
+codes, rate limits, and error behavior must be documented when these routes
+are implemented.
+
+The extension must not receive a reusable Clerk session token or backend
+secret. Handoff credentials and sensitive application snapshots must not be
+persisted in extension storage.

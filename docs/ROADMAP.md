@@ -80,6 +80,23 @@
 
 **Exit gate:** a user can manage an application from discovery through tracking, with no silent external submissions.
 
+## Phase 5A — Browser-assisted ATS preparation (planned)
+
+- [ ] Add the database migration for extension handoff credential fields.
+- [ ] Implement authenticated handoff issuance for owned, approved executions.
+- [ ] Implement atomic, single-use redemption with expiry and replay protection.
+- [ ] Test ownership, approval, expiry, invalidation, and concurrent redemption.
+- [ ] Create the Chrome Manifest V3 extension structure.
+- [ ] Implement Greenhouse detection and supported-field adapters.
+- [ ] Populate fields only after an explicit candidate action.
+- [ ] Let candidates review and correct populated fields before submission.
+- [ ] Keep login, CAPTCHA, human verification, resume uploads, and unsupported fields manual.
+- [ ] Never automate the employer Submit action.
+- [ ] Verify that form population does not advance the execution lifecycle.
+- [ ] Evaluate Lever and Ashby only after the Greenhouse workflow is validated.
+
+**Exit gate:** secure handoff tests pass, supported fields are reviewable, and no application is submitted without direct candidate action.
+
 ## Phase 6 — Quality and operational readiness
 
 - [ ] Add automated frontend tests for key interactions.

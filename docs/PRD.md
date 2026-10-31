@@ -86,6 +86,22 @@ Initial product priorities:
 - Require explicit confirmation before any external submission.
 - Report the outcome accurately; do not equate opening a job page with applying.
 
+### H. Browser-assisted application preparation (planned)
+
+- Provide an optional Chrome extension for supported ATS application forms.
+- Start with Greenhouse; consider Lever and Ashby after validation.
+- Detect supported application pages and populate supported fields only after
+  the candidate explicitly requests assistance.
+- Allow the candidate to review and correct every populated field.
+- Keep unsupported platforms and unsupported fields available through manual
+  completion.
+- Keep CAPTCHA, login, human verification, resume uploads, and final submission
+  under direct candidate control.
+- Never click the employer's Submit button automatically.
+- Never mark an application as submitted merely because its form was populated.
+- Retrieve approved application data through a short-lived, single-use,
+  execution-scoped backend handoff.
+
 ### Out of scope for the initial MVP
 - Unattended bulk application submission.
 - Fabricating or embellishing candidate qualifications.
@@ -109,6 +125,10 @@ Initial product priorities:
 | FR-10 | Human approval | External application submission requires explicit confirmation. |
 | FR-11 | Reliability | Main screens provide loading, empty, success, and failure states. |
 | FR-12 | Maintainability | Documented checks pass, and new critical behavior has automated tests. |
+| FR-13 | ATS detection | The extension identifies supported ATS pages and clearly reports unsupported pages. |
+| FR-14 | Secure extension handoff | Only an owned, approved execution can receive a short-lived, single-use extension handoff. |
+| FR-15 | Assisted form population | Supported fields are populated only after an explicit candidate action and remain reviewable and editable. |
+| FR-16 | Submission integrity | The extension never submits applications automatically or reports submission without a confirmed outcome. |
 
 Requirements FR-01 through FR-05 have some existing implementation according to the current repository inventory and manual dashboard test. Their full security and edge-case acceptance criteria still require verification. FR-06 onward must be audited before being classified as missing or unimplemented.
 

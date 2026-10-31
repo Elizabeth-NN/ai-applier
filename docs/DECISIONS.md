@@ -41,6 +41,46 @@ Record decisions that affect product behavior, architecture, security, or ongoin
 - **Decision:** Use `PRD.md` for requirements, `ROADMAP.md` for progress, `ARCHITECTURE.md` for system boundaries, and `API.md` for API contracts.
 - **Rule:** Update the relevant documents when a change materially changes behavior or scope.
 
+## D-006 — Human-controlled Chrome extension
+
+**Status:** Proposed
+
+**Decision:** Build an optional Chrome extension to assist with supported ATS
+application forms, initially Greenhouse.
+
+The extension may detect supported forms and populate approved candidate data
+after an explicit candidate action. It must not click Submit, bypass CAPTCHA,
+automate login, or perform unattended application submission.
+
+**Rationale:** Browser assistance reduces repetitive data entry while
+preserving candidate control and reducing the risk of incorrect applications.
+
+**Consequences:**
+- ATS-specific adapters are required.
+- Unsupported platforms retain the manual workflow.
+- Resume uploads and complex or unsupported fields remain manual initially.
+- Form population must not change an execution to submitted.
+
+## D-007 — Single-use extension handoff credentials
+
+**Status:** Proposed
+
+**Decision:** Use short-lived, single-use opaque credentials to transfer an
+approved application snapshot from the authenticated dashboard to the Chrome
+extension.
+
+The backend stores only a hash of the credential. Redemption must validate
+expiry, execution eligibility, and single-use state atomically.
+
+**Rationale:** The extension needs limited application-data access without
+receiving a reusable Clerk session token or backend secret.
+
+**Consequences:**
+- Add handoff credential fields and a database migration.
+- Add authenticated credential issuance and credential-protected redemption.
+- Keep credentials and sensitive snapshots out of persistent extension storage.
+- Test expiry, replay, ownership, invalidation, and concurrent redemption.
+
 ## Pending decisions
 
 - Initial job sources and access strategy.

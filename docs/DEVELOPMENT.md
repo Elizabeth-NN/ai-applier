@@ -121,3 +121,38 @@ Do not reset, drop, or seed a database containing valuable user data as part of 
 - Verify another user cannot access the application's record.
 
 The save/status/refresh workflow was manually reported working on 2026-10-24. The negative authorization cases still need explicit verification.
+
+## Planned Chrome extension development
+
+The browser-assisted ATS extension is planned but is not implemented yet.
+Do not treat these steps as an existing setup procedure.
+
+### Implementation order
+
+1. Add the backend database migration for extension handoff credentials.
+2. Implement authenticated handoff issuance for owned, approved executions.
+3. Implement atomic, single-use credential redemption with expiry checks.
+4. Add tests for ownership, approval, expiry, replay, invalidation, and
+   concurrent redemption.
+5. Create the Chrome Manifest V3 extension with separate background,
+   content-script, adapter, and shared modules.
+6. Implement Greenhouse detection and supported-field population first.
+7. Require an explicit candidate action before populating fields.
+8. Let the candidate review and correct every populated field.
+9. Keep unsupported fields, resume uploads, login, CAPTCHA, and human
+   verification under manual candidate control.
+10. Verify that form population does not start or complete an application
+    execution. The candidate must submit manually.
+
+### Security and testing boundaries
+
+- Never place Clerk secret keys or reusable Clerk session tokens in the
+  extension.
+- Keep handoff credentials in the extension background context and memory;
+  do not persist credentials or sensitive application snapshots.
+- Request only the browser permissions and ATS host access that are needed.
+- Never click an employer's Submit button automatically.
+- Do not mark an execution submitted without a confirmed outcome.
+- Treat uncertain submission outcomes as requiring human attention.
+- Do not broaden backend CORS or Clerk authorized parties merely to make
+  the extension work.

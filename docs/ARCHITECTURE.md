@@ -118,7 +118,59 @@ As the product grows, keep responsibilities separate:
 
 Do not introduce these abstractions prematurely; add them when a concrete feature needs them.
 
-## 9. Source of truth
+
+## 9. Browser-assisted ATS extension (planned)
+
+The Chrome extension will be a separate backend client. It will assist with
+supported employer application forms without taking control of submission.
+
+### Proposed structure
+
+- `extension/manifest.json`: Chrome Manifest V3 configuration.
+- `extension/src/background/`: extension coordination and backend handoff.
+- `extension/src/content/`: ATS page detection and form interaction.
+- `extension/src/adapters/`: ATS-specific detection and field mapping.
+- `extension/src/shared/`: shared types, messages, and validation.
+
+Greenhouse is the initial ATS target. Lever and Ashby may follow after
+validation.
+
+### Secure handoff
+
+1. The candidate signs in to the dashboard using Clerk.
+2. The dashboard requests a handoff for an approved execution.
+3. The backend verifies authentication, execution ownership, and approval.
+4. The backend issues a random, short-lived, single-use opaque credential.
+5. Only the credential hash is stored by the backend.
+6. The extension background service worker redeems the credential.
+7. The backend atomically consumes it and returns the minimum required
+   application snapshot.
+8. Sensitive data remains in memory and is not persisted in extension storage.
+
+The initial expiry target is five minutes. Issuing a replacement credential
+invalidates any previous unredeemed credential for that execution.
+
+### Security boundaries
+
+- Never expose the Clerk secret key to the extension.
+- Do not broaden Clerk authorized parties or backend CORS for arbitrary
+  extension origins.
+- Never send the handoff credential to content scripts.
+- Enforce expiry, single-use redemption, execution scope, and replay protection.
+- Never log credentials, resume contents, or full application snapshots.
+- Restrict extension host permissions to supported sites and required
+  dashboard/backend communication.
+- Keep login, CAPTCHA, human verification, and final submission under
+  candidate control.
+
+### Execution lifecycle boundary
+
+ATS detection, navigation, and form population do not start a submission.
+The existing `start` operation is reserved for a genuine submission attempt.
+Record completion only after a confirmed outcome. Flag uncertain outcomes for
+human attention rather than blindly retrying.
+
+## 10. Source of truth
 
 When documentation and code disagree:
 1. Inspect the code and tests.
