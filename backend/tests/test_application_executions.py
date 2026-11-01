@@ -14,6 +14,7 @@ from app.db.session import Base
 from app.main import app
 from app.models.application import Application
 from app.models.application_execution import ApplicationExecution
+from app.models.candidate_answer import CandidateAnswer
 from app.models.job import Job
 from app.models.resume import Resume
 import app.services.application_preparation as preparation
@@ -121,6 +122,209 @@ def prepare_execution(context):
             "resume_id": context["resume_id"],
         },
     )
+
+
+def create_approved_candidate_answer(
+    context,
+    *,
+    user_id="user_test_1",
+    approved=True,
+    answer="I built and maintained Python applications.",
+):
+    with context["db_factory"]() as db:
+        candidate_answer = CandidateAnswer(
+            user_id=user_id,
+            question_key="python_experience",
+            question_label="Describe your Python experience",
+            answer=answer,
+            is_user_authored=True,
+            is_approved=approved,
+        )
+        db.add(candidate_answer)
+        db.commit()
+        db.refresh(candidate_answer)
+        return candidate_answer.id
+
+
+def test_prepare_rejects_unapproved_candidate_answer(execution_context):
+    answer_id = create_approved_candidate_answer(
+        execution_context,
+        approved=False,
+    )
+
+    response = execution_context["client"].post(
+        "/api/application-executions/prepare",
+        headers={"Idempotency-Key": "unapproved-answer-test"},
+        json={
+            "application_id": execution_context["application_id"],
+            "resume_id": execution_context["resume_id"],
+            "candidate_answer_ids": [answer_id],
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_prepare_rejects_another_users_candidate_answer(execution_context):
+    answer_id = create_approved_candidate_answer(
+        execution_context,
+        user_id="user_test_2",
+    )
+
+    response = execution_context["client"].post(
+        "/api/application-executions/prepare",
+        headers={"Idempotency-Key": "other-user-answer-test"},
+        json={
+            "application_id": execution_context["application_id"],
+            "resume_id": execution_context["resume_id"],
+            "candidate_answer_ids": [answer_id],
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_prepare_snapshots_exact_approved_candidate_answer(execution_context):
+    answer_text = "I developed a Flask API and wrote its automated tests."
+    answer_id = create_approved_candidate_answer(
+        execution_context,
+        answer=answer_text,
+    )
+
+    response = execution_context["client"].post(
+        "/api/application-executions/prepare",
+        headers={"Idempotency-Key": "answer-snapshot-test"},
+        json={
+            "application_id": execution_context["application_id"],
+            "resume_id": execution_context["resume_id"],
+            "candidate_answer_ids": [answer_id],
+        },
+    )
+
+    assert response.status_code == 201
+    execution_id = response.json()["id"]
+
+    with execution_context["db_factory"]() as db:
+        execution = db.get(ApplicationExecution, execution_id)
+        assert execution is not None
+
+        snapshot = execution.application_payload
+        assert snapshot["candidate_answer_ids"] == [answer_id]
+        assert snapshot["candidate_answers"] == [
+            {
+                "id": answer_id,
+                "question_key": "python_experience",
+                "question_label": "Describe your Python experience",
+                "answer": answer_text,
+            }
+        ]
+
+        # Editing the answer bank must not alter an existing execution.
+        answer = db.get(CandidateAnswer, answer_id)
+        answer.answer = "A different answer added after preparation."
+        db.commit()
+        db.refresh(execution)
+
+        assert (
+            execution.application_payload["candidate_answers"][0]["answer"]
+            == answer_text
+        )
+
+
+def test_idempotency_key_rejects_different_candidate_answer_selection(
+    execution_context,
+):
+    answer_id = create_approved_candidate_answer(execution_context)
+    headers = {"Idempotency-Key": "different-answer-selection-test"}
+
+    first = execution_context["client"].post(
+        "/api/application-executions/prepare",
+        headers=headers,
+        json={
+            "application_id": execution_context["application_id"],
+            "resume_id": execution_context["resume_id"],
+            "candidate_answer_ids": [answer_id],
+        },
+    )
+
+    second = execution_context["client"].post(
+        "/api/application-executions/prepare",
+        headers=headers,
+        json={
+            "application_id": execution_context["application_id"],
+            "resume_id": execution_context["resume_id"],
+            "candidate_answer_ids": [],
+        },
+    )
+
+    assert first.status_code == 201
+    assert second.status_code == 409
+
+
+def test_extension_handoff_returns_saved_candidate_answer_snapshot(
+    execution_context,
+):
+    answer_text = "I have experience building Python backend services."
+    answer_id = create_approved_candidate_answer(
+        execution_context,
+        answer=answer_text,
+    )
+
+    with execution_context["db_factory"]() as db:
+        job = db.scalar(select(Job))
+        job.application_url = "https://boards.greenhouse.io/example/jobs/123"
+        db.commit()
+
+    prepared = execution_context["client"].post(
+        "/api/application-executions/prepare",
+        headers={"Idempotency-Key": "handoff-answer-snapshot-test"},
+        json={
+            "application_id": execution_context["application_id"],
+            "resume_id": execution_context["resume_id"],
+            "candidate_answer_ids": [answer_id],
+        },
+    )
+    assert prepared.status_code == 201
+    execution_id = prepared.json()["id"]
+
+    reviewed = execution_context["client"].post(
+        f"/api/application-executions/{execution_id}/review"
+    )
+    assert reviewed.status_code == 200
+
+    approved = execution_context["client"].post(
+        f"/api/application-executions/{execution_id}/approve"
+    )
+    assert approved.status_code == 200
+
+    issued = execution_context["client"].post(
+        f"/api/application-executions/{execution_id}/extension-handoff"
+    )
+    assert issued.status_code == 200
+
+    # Change the source answer after preparation.
+    with execution_context["db_factory"]() as db:
+        answer = db.get(CandidateAnswer, answer_id)
+        answer.answer = "Changed after the execution was prepared."
+        db.commit()
+
+    redeemed = execution_context["client"].post(
+        "/api/extension-handoffs/redeem",
+        json={
+            "token": issued.json()["token"],
+            "active_url": "https://boards.greenhouse.io/example/jobs/123",
+        },
+    )
+
+    assert redeemed.status_code == 200
+    assert redeemed.json()["candidate_answers"] == [
+        {
+            "id": answer_id,
+            "question_key": "python_experience",
+            "question_label": "Describe your Python experience",
+            "answer": answer_text,
+        }
+    ]
 
 
 def test_prepare_endpoint_creates_execution(execution_context):

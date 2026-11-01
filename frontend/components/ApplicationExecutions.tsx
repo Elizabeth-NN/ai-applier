@@ -32,6 +32,17 @@ type CoverLetterDraft = {
   updated_at: string;
 };
 
+type CandidateAnswer = {
+  id: number;
+  question_key: string;
+  question_label: string;
+  answer: string;
+  is_user_authored: boolean;
+  is_approved: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
 type ExecutionStatus =
   | "prepared"
   | "approved"
@@ -668,6 +679,9 @@ export default function ApplicationExecutions({ onNavigate }: Props) {
   const [applications, setApplications] = useState<Application[]>([]);
   const [resumes, setResumes] = useState<Resume[]>([]);
   const [drafts, setDrafts] = useState<CoverLetterDraft[]>([]);
+  const [candidateAnswers, setCandidateAnswers] = useState<CandidateAnswer[]>([]);
+  const [selectedCandidateAnswerIds, setSelectedCandidateAnswerIds] =
+    useState<number[]>([]);
   const [executions, setExecutions] = useState<ApplicationExecution[]>([]);
   const [jobsById, setJobsById] = useState<Record<number, JobSummary>>({});
   const jobsCache = useRef<Record<number, JobSummary>>({});
@@ -708,14 +722,20 @@ export default function ApplicationExecutions({ onNavigate }: Props) {
       throw new Error("Please sign in again.");
     }
 
-    const [loadedApplications, loadedResumes, loadedDrafts, loadedExecutions] =
-      await Promise.all([
+    const [
+      loadedApplications,
+      loadedResumes,
+      loadedDrafts,
+      loadedCandidateAnswers,
+      loadedExecutions,
+    ] = await Promise.all([
         apiRequest<Application[]>("/api/applications?limit=100", token),
         apiRequest<Resume[]>("/api/resumes", token),
         apiRequest<CoverLetterDraft[]>(
           "/api/cover-letter-drafts?limit=100",
           token,
         ),
+        apiRequest<CandidateAnswer[]>("/api/candidate-answers?limit=100", token),
         apiRequest<ApplicationExecution[]>(
           "/api/application-executions?limit=100",
           token,
@@ -749,6 +769,15 @@ export default function ApplicationExecutions({ onNavigate }: Props) {
     setApplications(loadedApplications);
     setResumes(loadedResumes);
     setDrafts(loadedDrafts);
+    setCandidateAnswers(loadedCandidateAnswers);
+    setSelectedCandidateAnswerIds((current) => {
+      const approvedIds = new Set(
+        loadedCandidateAnswers
+          .filter((answer) => answer.is_user_authored && answer.is_approved)
+          .map((answer) => answer.id),
+      );
+      return current.filter((id) => approvedIds.has(id));
+    });
     setExecutions(loadedExecutions);
 
     const selectable = loadedApplications.filter(
@@ -821,6 +850,14 @@ export default function ApplicationExecutions({ onNavigate }: Props) {
     () =>
       drafts.filter((draft) => String(draft.application_id) === applicationId),
     [drafts, applicationId],
+  );
+
+  const approvedCandidateAnswers = useMemo(
+    () =>
+      candidateAnswers.filter(
+        (answer) => answer.is_user_authored && answer.is_approved,
+      ),
+    [candidateAnswers],
   );
 
   const existingForApplication = useMemo(
@@ -902,7 +939,10 @@ export default function ApplicationExecutions({ onNavigate }: Props) {
 
       if (!token) throw new Error("Please sign in again.");
 
-      const signature = `${applicationId}:${resumeId}:${draftId}`;
+      const selectedAnswerIds = [...selectedCandidateAnswerIds].sort(
+        (a, b) => a - b,
+      );
+      const signature = `${applicationId}:${resumeId}:${draftId}:${selectedAnswerIds.join(",")}`;
       if (idempotency.current?.signature !== signature) {
         idempotency.current = { signature, key: crypto.randomUUID() };
       }
@@ -917,6 +957,7 @@ export default function ApplicationExecutions({ onNavigate }: Props) {
             application_id: Number(applicationId),
             resume_id: Number(resumeId),
             cover_letter_draft_id: draftId ? Number(draftId) : null,
+            candidate_answer_ids: selectedAnswerIds,
           }),
         },
       );
@@ -933,6 +974,7 @@ export default function ApplicationExecutions({ onNavigate }: Props) {
       setExpandedIds((current) => new Set(current).add(created.id));
       setShowForm(false);
       setDraftId("");
+      setSelectedCandidateAnswerIds([]);
       setNotice(
         "Application prepared. Check the snapshot below, then mark it as reviewed.",
       );
@@ -1255,6 +1297,62 @@ export default function ApplicationExecutions({ onNavigate }: Props) {
                 </span>
               )}
             </label>
+
+            <fieldset className="rounded-xl border border-slate-200 p-4">
+              <legend className="px-1 text-sm font-semibold text-slate-700">
+                Reusable application answers (optional)
+              </legend>
+              <p className="mb-3 text-xs leading-5 text-slate-500">
+                Select answers you wrote yourself and explicitly approved.
+                Their exact text will be saved in this application snapshot.
+                Nothing is submitted automatically.
+              </p>
+
+              {approvedCandidateAnswers.length > 0 ? (
+                <div className="space-y-3">
+                  {approvedCandidateAnswers.map((answer) => (
+                    <label
+                      key={answer.id}
+                      className="flex cursor-pointer items-start gap-3 rounded-lg border border-slate-100 p-3 hover:bg-slate-50"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedCandidateAnswerIds.includes(answer.id)}
+                        onChange={(event) => {
+                          setSelectedCandidateAnswerIds((current) =>
+                            event.target.checked
+                              ? [...current, answer.id]
+                              : current.filter((id) => id !== answer.id),
+                          );
+                        }}
+                        disabled={saving}
+                        className="mt-1 h-4 w-4 rounded border-slate-300 text-violet-600 focus:ring-violet-500"
+                      />
+                      <span className="min-w-0">
+                        <span className="block text-sm font-medium text-slate-800">
+                          {answer.question_label}
+                        </span>
+                        <span className="mt-1 block whitespace-pre-wrap text-sm font-normal text-slate-600">
+                          {answer.answer}
+                        </span>
+                        <span className="mt-2 block text-xs font-medium text-emerald-700">
+                          User-authored · Approved
+                        </span>
+                      </span>
+                    </label>
+                  ))}
+                  <p className="text-xs text-slate-500">
+                    {selectedCandidateAnswerIds.length} answer
+                    {selectedCandidateAnswerIds.length === 1 ? "" : "s"} selected.
+                  </p>
+                </div>
+              ) : (
+                <p className="text-sm text-slate-500">
+                  You have no approved reusable answers yet. You can prepare
+                  this application without them.
+                </p>
+              )}
+            </fieldset>
 
             <button
               type="submit"
