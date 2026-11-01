@@ -1,7 +1,14 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    AnyHttpUrl,
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 
 class JobCreate(BaseModel):
@@ -13,6 +20,26 @@ class JobCreate(BaseModel):
     application_url: str | None = Field(default=None, max_length=2048)
     employment_type: str | None = Field(default=None, max_length=100)
 
+class ApplicationUrlUpdate(BaseModel):
+    """Admin update for a verified employer application URL."""
+
+    application_url: AnyHttpUrl | None
+
+    @field_validator("application_url")
+    @classmethod
+    def validate_application_url(cls, value):
+        if value is None:
+            return value
+
+        if value.scheme != "https":
+            raise ValueError("Application URLs must use HTTPS.")
+
+        if value.username is not None or value.password is not None:
+            raise ValueError(
+                "Application URLs must not contain embedded credentials."
+            )
+
+        return value
 
 class JobRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)

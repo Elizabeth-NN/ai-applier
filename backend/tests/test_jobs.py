@@ -847,6 +847,118 @@ def test_eligibility_verification_requires_admin(job_context):
 
     assert response.status_code == 403
 
+def test_admin_can_set_job_application_url(job_context):
+    created = job_context.post("/api/jobs", json=valid_job())
+    job_id = created.json()["id"]
+
+    response = job_context.patch(
+        f"/api/jobs/{job_id}/application-url",
+        json={
+            "application_url": (
+                "https://boards.greenhouse.io/example/jobs/123"
+            )
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["application_url"] == (
+        "https://boards.greenhouse.io/example/jobs/123"
+    )
+    assert data["source_url"] == "https://example.com/jobs/123"
+
+
+def test_admin_can_replace_job_application_url(job_context):
+    created = job_context.post(
+        "/api/jobs",
+        json={
+            **valid_job(),
+            "application_url": "https://example.com/apply/old",
+        },
+    )
+    job_id = created.json()["id"]
+
+    response = job_context.patch(
+        f"/api/jobs/{job_id}/application-url",
+        json={"application_url": "https://jobs.lever.co/example/123"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["application_url"] == (
+        "https://jobs.lever.co/example/123"
+    )
+
+
+def test_admin_can_clear_job_application_url(job_context):
+    created = job_context.post(
+        "/api/jobs",
+        json={
+            **valid_job(),
+            "application_url": "https://example.com/apply",
+        },
+    )
+    job_id = created.json()["id"]
+
+    response = job_context.patch(
+        f"/api/jobs/{job_id}/application-url",
+        json={"application_url": None},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["application_url"] is None
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"application_url": "http://example.com/apply"},
+        {"application_url": "javascript:alert(1)"},
+        {"application_url": "https://user:password@example.com/apply"},
+        {},
+    ],
+)
+def test_invalid_application_url_updates_are_rejected(
+    job_context, payload
+):
+    created = job_context.post("/api/jobs", json=valid_job())
+    job_id = created.json()["id"]
+
+    response = job_context.patch(
+        f"/api/jobs/{job_id}/application-url",
+        json=payload,
+    )
+
+    assert response.status_code == 422
+
+
+def test_application_url_update_for_missing_job_returns_404(job_context):
+    response = job_context.patch(
+        "/api/jobs/999999/application-url",
+        json={"application_url": "https://example.com/apply"},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Job not found"
+
+
+def test_application_url_update_requires_admin(job_context):
+    created = job_context.post("/api/jobs", json=valid_job())
+    job_id = created.json()["id"]
+
+    def reject_non_admin():
+        raise HTTPException(
+            status_code=403,
+            detail="Admin access required",
+        )
+
+    app.dependency_overrides[require_admin] = reject_non_admin
+
+    response = job_context.patch(
+        f"/api/jobs/{job_id}/application-url",
+        json={"application_url": "https://example.com/apply"},
+    )
+
+    assert response.status_code == 403
 
 def test_unknown_eligibility_clears_current_verification(job_context):
     created = job_context.post("/api/jobs", json=valid_job())

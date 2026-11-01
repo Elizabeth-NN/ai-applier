@@ -18,6 +18,7 @@ from app.services.resume_job_matching import (
     score_resume_job_match,
 )
 from app.schemas.job import (
+    ApplicationUrlUpdate,
     EligibilityVerificationRequest,
     JobCreate,
     JobRead,
@@ -331,6 +332,31 @@ def verify_job_eligibility(
     db.refresh(job)
     return job
 
+@router.patch("/{job_id}/application-url", response_model=JobRead)
+def update_job_application_url(
+    job_id: int,
+    payload: ApplicationUrlUpdate,
+    admin_id: CurrentAdmin,
+    db: Session = Depends(get_db),
+):
+    """Set or clear the verified employer application URL."""
+    job = db.get(Job, job_id)
+
+    if job is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Job not found",
+        )
+
+    job.application_url = (
+        str(payload.application_url)
+        if payload.application_url is not None
+        else None
+    )
+
+    db.commit()
+    db.refresh(job)
+    return job
 
 @router.get("/matches", response_model=ResumeJobMatchResult)
 def match_jobs_to_resume(

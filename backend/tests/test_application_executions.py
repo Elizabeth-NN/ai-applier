@@ -138,7 +138,7 @@ def test_prepare_endpoint_creates_execution(execution_context):
 
 
 @pytest.mark.parametrize(
-    ("source_url", "expected_platform"),
+    ("application_url", "expected_platform"),
     [
         ("https://boards.greenhouse.io/example/jobs/123", "greenhouse"),
         ("https://job-boards.greenhouse.io/example/jobs/123", "greenhouse"),
@@ -147,20 +147,19 @@ def test_prepare_endpoint_creates_execution(execution_context):
 )
 def test_prepare_endpoint_detects_ats_platform(
     execution_context,
-    source_url,
+    application_url,
     expected_platform,
 ):
     with execution_context["db_factory"]() as db:
         job = db.scalar(select(Job))
         assert job is not None
-        job.source_url = source_url
+        job.application_url = application_url
         db.commit()
 
     response = prepare_execution(execution_context)
 
     assert response.status_code == 201
     assert response.json()["ats_platform"] == expected_platform
-
 
 def test_prepare_endpoint_is_idempotent(execution_context):
     first = prepare_execution(execution_context)
@@ -301,7 +300,7 @@ def approve_greenhouse_execution_for_test(context):
     with context["db_factory"]() as db:
         job = db.scalar(select(Job))
         assert job is not None
-        job.source_url = "https://boards.greenhouse.io/example/jobs/123"
+        job.application_url = "https://boards.greenhouse.io/example/jobs/123"
         db.commit()
 
     return approve_execution_for_test(context)
