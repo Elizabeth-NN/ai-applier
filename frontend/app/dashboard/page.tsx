@@ -20,7 +20,6 @@ import {
   ArrowUpRight,
   MapPin,
   Clock,
-  Sparkle,
   TrendUp,
   Binoculars,
   PaperPlaneTilt,
@@ -53,6 +52,7 @@ type ApiJob = {
   location: string | null;
   created_at: string;
   source_url: string | null;
+  application_url: string | null;
   source_name: string | null;
   source_job_id: string | null;
   expires_at: string | null;
@@ -654,6 +654,196 @@ function EligibilityVerificationPanel({
 }
 
 /* -------------------------------------------------------------------------- */
+/*  Employer application URL (admin only)                                     */
+/* -------------------------------------------------------------------------- */
+
+function ApplicationUrlPanel({
+  job,
+  onUpdated,
+}: {
+  job: ApiJob;
+  onUpdated: (updated: ApiJob) => void;
+}) {
+  const { getToken } = useAuth();
+
+  const [applicationUrl, setApplicationUrl] = useState(
+    job.application_url ?? "",
+  );
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const [showForm, setShowForm] = useState(false);
+
+  async function saveApplicationUrl(clear = false) {
+    if (saving) return;
+
+    const value = clear ? null : applicationUrl.trim();
+
+    if (!clear) {
+      if (!value) {
+        setError("Enter an employer application URL.");
+        return;
+      }
+
+      try {
+        const parsed = new URL(value);
+        if (parsed.protocol !== "https:") {
+          throw new Error("The employer application URL must use HTTPS.");
+        }
+      } catch (err) {
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Enter a valid HTTPS URL.",
+        );
+        return;
+      }
+    }
+
+    setSaving(true);
+    setError("");
+    setMessage("");
+
+    try {
+      const token = await getToken();
+      if (!token) throw new Error("Please sign in again.");
+
+      const updated = await apiRequest<ApiJob>(
+        `/api/jobs/${job.id}/application-url`,
+        token,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ application_url: value }),
+        },
+      );
+
+      setApplicationUrl(updated.application_url ?? "");
+      onUpdated(updated);
+      setMessage(
+        clear
+          ? "Employer application URL cleared."
+          : "Employer application URL saved.",
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Could not update the application URL.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="mt-4 border-t border-slate-100 pt-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs font-semibold text-slate-500">
+          Employer application URL
+        </span>
+
+        {job.application_url ? (
+          <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">
+            Provided
+          </span>
+        ) : (
+          <span className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700">
+            Not provided — review only
+          </span>
+        )}
+      </div>
+
+      {job.application_url && (
+        <a
+          href={job.application_url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-2 inline-block break-all text-sm font-medium text-violet-700 underline"
+        >
+          Open employer application page
+        </a>
+      )}
+
+      <button
+        type="button"
+        onClick={() => {
+          setApplicationUrl(job.application_url ?? "");
+          setShowForm((visible) => !visible);
+          setError("");
+          setMessage("");
+        }}
+        aria-expanded={showForm}
+        className="mt-3 block rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-violet-700"
+      >
+        {showForm ? "Close URL editor" : "Manage application URL"}
+      </button>
+
+      {showForm && (
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            void saveApplicationUrl();
+          }}
+          className="mt-4 space-y-3"
+        >
+          <label className="block text-sm font-medium text-slate-700">
+            Verified employer application URL
+            <input
+              type="url"
+              required
+              maxLength={2048}
+              value={applicationUrl}
+              onChange={(event) => setApplicationUrl(event.target.value)}
+              disabled={saving}
+              placeholder="https://boards.greenhouse.io/company/jobs/123"
+              className="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-normal outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
+            />
+          </label>
+
+          <p className="text-xs text-slate-500">
+            Enter the actual employer application page, not the job
+            discovery listing. Only HTTPS URLs are accepted.
+          </p>
+
+          {error && (
+            <p role="alert" className="text-sm text-red-600">
+              {error}
+            </p>
+          )}
+
+          {message && (
+            <p role="status" className="text-sm text-emerald-700">
+              {message}
+            </p>
+          )}
+
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="submit"
+              disabled={saving || !applicationUrl.trim()}
+              className="rounded-lg bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {saving ? "Saving..." : "Save URL"}
+            </button>
+
+            {job.application_url && (
+              <button
+                type="button"
+                disabled={saving}
+                onClick={() => void saveApplicationUrl(true)}
+                className="rounded-lg border border-red-200 px-4 py-2.5 text-sm font-semibold text-red-600 hover:bg-red-50 disabled:opacity-60"
+              >
+                Clear URL
+              </button>
+            )}
+          </div>
+        </form>
+      )}
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
 /*  Job card (Find Jobs list)                                                 */
 /* -------------------------------------------------------------------------- */
 
@@ -786,6 +976,13 @@ function JobCard({
         isAdmin={isAdmin}
         onUpdated={onEligibilityUpdated}
       />
+
+      {isAdmin && (
+        <ApplicationUrlPanel
+          job={apiJob}
+          onUpdated={onEligibilityUpdated}
+        />
+      )}
     </article>
   );
 }
