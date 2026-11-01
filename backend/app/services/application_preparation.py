@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.models.application import Application
 from app.models.application_batch import ApplicationBatch, ApplicationBatchItem
+from app.models.candidate_answer import CandidateAnswer
 from app.models.application_execution import ApplicationExecution
 from app.models.cover_letter_draft import CoverLetterDraft
 from app.models.job import Job
@@ -108,6 +109,7 @@ def _existing_execution(
     resume_id: int,
     cover_letter_draft_id: int | None,
     batch_item_id: int | None,
+    candidate_answer_ids: list[int],
 ) -> ApplicationExecution | None:
     """Return an existing matching request, or reject key reuse."""
     existing = db.scalar(
@@ -125,6 +127,9 @@ def _existing_execution(
         and existing.resume_id == resume_id
         and existing.cover_letter_draft_id == cover_letter_draft_id
         and existing.batch_item_id == batch_item_id
+        and sorted(
+            (existing.application_payload or {}).get("candidate_answer_ids", [])
+        ) == candidate_answer_ids
     )
 
     if not same_request:
@@ -145,10 +150,12 @@ def prepare_application_execution(
     idempotency_key: str,
     cover_letter_draft_id: int | None = None,
     batch_item_id: int | None = None,
+    candidate_answer_ids: list[int] | None = None,
 ) -> ApplicationExecution:
     """Validate ownership and create a reviewable execution snapshot."""
 
     key = idempotency_key.strip()
+    selected_answer_ids = sorted(candidate_answer_ids or [])
     if not key or len(key) > 100:
         raise HTTPException(
             status_code=422,
@@ -163,6 +170,7 @@ def prepare_application_execution(
         resume_id,
         cover_letter_draft_id,
         batch_item_id,
+        selected_answer_ids,
     )
     if existing is not None:
         return existing
@@ -243,6 +251,31 @@ def prepare_application_execution(
                 detail="Cover letter draft not found for this application.",
             )
 
+    candidate_answers = []
+    if selected_answer_ids:
+        candidate_answers = db.scalars(
+            select(CandidateAnswer).where(
+                CandidateAnswer.id.in_(selected_answer_ids),
+                CandidateAnswer.user_id == user_id,
+                CandidateAnswer.is_user_authored.is_(True),
+                CandidateAnswer.is_approved.is_(True),
+            )
+        ).all()
+
+        if len(candidate_answers) != len(selected_answer_ids):
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Every selected candidate answer must belong to you "
+                    "and be confirmed as user-authored and approved."
+                ),
+            )
+
+        answers_by_id = {answer.id: answer for answer in candidate_answers}
+        candidate_answers = [
+            answers_by_id[answer_id] for answer_id in selected_answer_ids
+        ]
+
     if batch_item_id is not None:
         batch_item = db.scalar(
             select(ApplicationBatchItem)
@@ -285,8 +318,8 @@ def prepare_application_execution(
 
     cover_letter_content = cover_letter.content if cover_letter else None
 
-    # These are known facts and references only. Candidate answers and
-    # additional personal information must be supplied and reviewed separately.
+    # Candidate answers are included only when explicitly selected and
+    # confirmed as user-authored and approved by this user.
     application_payload = {
         "job": job_snapshot,
         "resume": {
@@ -295,6 +328,16 @@ def prepare_application_execution(
             "sha256": resume_sha256,
         },
         "cover_letter": cover_letter_content,
+        "candidate_answer_ids": selected_answer_ids,
+        "candidate_answers": [
+            {
+                "id": answer.id,
+                "question_key": answer.question_key,
+                "question_label": answer.question_label,
+                "answer": answer.answer,
+            }
+            for answer in candidate_answers
+        ],
     }
 
     execution = ApplicationExecution(
@@ -336,6 +379,7 @@ def prepare_application_execution(
             resume_id,
             cover_letter_draft_id,
             batch_item_id,
+            selected_answer_ids,
         )
         if existing is not None:
             return existing
@@ -585,6 +629,9 @@ def redeem_extension_handoff(
         "job_snapshot": execution.job_snapshot,
         "resume_filename": execution.resume_filename_snapshot,
         "cover_letter": execution.cover_letter_snapshot,
+        "candidate_answers": (
+            execution.application_payload or {}
+        ).get("candidate_answers", []),
     }
 
     db.commit()

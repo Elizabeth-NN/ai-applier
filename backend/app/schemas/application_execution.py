@@ -9,6 +9,16 @@ class ApplicationExecutionPrepare(BaseModel):
     resume_id: int = Field(gt=0)
     cover_letter_draft_id: int | None = Field(default=None, gt=0)
     batch_item_id: int | None = Field(default=None, gt=0)
+    candidate_answer_ids: list[int] = Field(default_factory=list, max_length=50)
+
+    @field_validator("candidate_answer_ids")
+    @classmethod
+    def validate_candidate_answer_ids(cls, value: list[int]) -> list[int]:
+        if any(answer_id <= 0 for answer_id in value):
+            raise ValueError("Candidate answer IDs must be positive.")
+        if len(value) != len(set(value)):
+            raise ValueError("Candidate answer IDs must be unique.")
+        return value
 
 class ExtensionHandoffIssueResponse(BaseModel):
     token: str
@@ -26,6 +36,7 @@ class ExtensionHandoffRedeemResponse(BaseModel):
     job_snapshot: dict[str, Any]
     resume_filename: str
     cover_letter: str | None
+    candidate_answers: list[dict[str, Any]] = Field(default_factory=list)
 
 class ApplicationExecutionRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
