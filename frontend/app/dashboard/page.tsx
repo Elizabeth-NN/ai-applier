@@ -58,6 +58,7 @@ type ApiJob = {
   source_job_id: string | null;
   expires_at: string | null;
   remote_type: string | null;
+  employment_type: string | null;
   eligible_countries: string[] | null;
   eligibility_status: string;
   eligibility_evidence_url: string | null;
@@ -1139,6 +1140,7 @@ export default function DashboardPage() {
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [remoteType, setRemoteType] = useState("");
+  const [employmentType, setEmploymentType] = useState("");
   const [eligibilityStatus, setEligibilityStatus] = useState("");
   const [listingStatus, setListingStatus] = useState("");
   const [sortBy, setSortBy] = useState<"newest" | "relevance">("newest");
@@ -1375,6 +1377,7 @@ export default function DashboardPage() {
         });
 
         if (remoteType) params.set("remote_type", remoteType);
+        if (employmentType) params.set("employment_type", employmentType);
         if (eligibilityStatus) {
           params.set("eligibility_status", eligibilityStatus);
         }
@@ -1412,6 +1415,7 @@ export default function DashboardPage() {
     jobPage,
     jobsRefreshKey,
     remoteType,
+    employmentType,
     eligibilityStatus,
     listingStatus,
     sortBy,
@@ -1568,7 +1572,7 @@ export default function DashboardPage() {
   const lastResult = Math.min(jobPage * PAGE_SIZE, jobTotal);
 
   const hasActiveFilters = Boolean(
-    remoteType || eligibilityStatus || listingStatus || search || sortBy !== "newest",
+    remoteType || employmentType || eligibilityStatus || listingStatus || search || sortBy !== "newest",
   );
 
   const stats = [
@@ -1946,6 +1950,7 @@ export default function DashboardPage() {
 
   function clearJobFilters() {
     setRemoteType("");
+    setEmploymentType("");
     setEligibilityStatus("");
     setListingStatus("");
     setSortBy("newest");
@@ -2391,7 +2396,7 @@ export default function DashboardPage() {
               {/* ============================ Find Jobs ============================ */}
               {activePage === "Find Jobs" && (
                 <section className="space-y-4">
-                  <div className="grid grid-cols-1 gap-3 rounded-2xl border border-slate-200 bg-white p-4 sm:grid-cols-2 xl:grid-cols-4">
+                  <div className="grid grid-cols-1 gap-3 rounded-2xl border border-slate-200 bg-white p-4 sm:grid-cols-2 xl:grid-cols-5">
                     <label className="space-y-1.5">
                       <span className="text-xs font-semibold text-slate-600">
                         Work arrangement
@@ -2407,6 +2412,28 @@ export default function DashboardPage() {
                         <option value="remote">Remote</option>
                         <option value="hybrid">Hybrid</option>
                         <option value="onsite">On-site</option>
+                        <option value="unknown">Unknown</option>
+                      </select>
+                    </label>
+
+                    <label className="space-y-1.5">
+                      <span className="text-xs font-semibold text-slate-600">
+                        Employment type
+                      </span>
+                      <select
+                        value={employmentType}
+                        onChange={(event) =>
+                          updateJobFilter(() =>
+                            setEmploymentType(event.target.value),
+                          )
+                        }
+                        className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm"
+                      >
+                        <option value="">All employment types</option>
+                        <option value="full-time">Full-time</option>
+                        <option value="part-time">Part-time</option>
+                        <option value="contract">Contract</option>
+                        <option value="internship">Internship</option>
                         <option value="unknown">Unknown</option>
                       </select>
                     </label>
@@ -2473,7 +2500,7 @@ export default function DashboardPage() {
                       <button
                         type="button"
                         onClick={clearJobFilters}
-                        className="text-left text-sm font-semibold text-violet-600 hover:text-violet-800 sm:col-span-2 xl:col-span-4"
+                        className="text-left text-sm font-semibold text-violet-600 hover:text-violet-800 sm:col-span-2 xl:col-span-5"
                       >
                         Clear all filters
                       </button>

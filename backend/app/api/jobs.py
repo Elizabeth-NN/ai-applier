@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pathlib import Path
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, literal, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.auth import CurrentAdmin, CurrentUser
@@ -131,6 +131,10 @@ def search_jobs(
         default=None,
         pattern="^(active|closed|unknown)$",
     ),
+    employment_type: str | None = Query(
+        default=None,
+        pattern="^(full-time|part-time|contract|internship|unknown)$",
+    ),
     sort_by: str = Query(default="newest", pattern="^(newest|relevance)$"),
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=20, ge=1, le=100),
@@ -167,6 +171,25 @@ def search_jobs(
 
     if listing_status is not None:
         filters.append(Job.listing_status == listing_status)
+
+    if employment_type == "unknown":
+        filters.append(
+            or_(
+                Job.employment_type.is_(None),
+                func.trim(Job.employment_type) == "",
+            )
+        )
+    elif employment_type is not None:
+        normalized_type = func.replace(
+            func.lower(func.coalesce(Job.employment_type, "")),
+            " ",
+            "",
+        )
+        normalized_type = func.replace(normalized_type, ";", ",")
+        delimited_type = literal(",") + normalized_type + literal(",")
+        filters.append(
+            delimited_type.contains(f",{employment_type.replace(' ', '').lower()},")
+        )
 
     if filters:
         statement = statement.where(*filters)

@@ -587,6 +587,140 @@ def create_job_with_metadata(
     return response.json()["id"]
 
 
+def set_job_employment_type(job_context, job_id, employment_type):
+    with job_context.testing_session() as db:
+        job = db.get(Job, job_id)
+        assert job is not None
+        job.employment_type = employment_type
+        db.commit()
+
+
+def test_job_search_filters_employment_type_case_insensitively(job_context):
+    full_time_id = job_context.post(
+        "/api/jobs",
+        json={**valid_job(), "title": "Full-time Developer"},
+    ).json()["id"]
+    contract_id = job_context.post(
+        "/api/jobs",
+        json={**valid_job(), "title": "Contract Developer"},
+    ).json()["id"]
+    internship_id = job_context.post(
+        "/api/jobs",
+        json={**valid_job(), "title": "Internship Developer"},
+    ).json()["id"]
+
+    set_job_employment_type(job_context, full_time_id, "Full-time")
+    set_job_employment_type(job_context, contract_id, "CONTRACT")
+    set_job_employment_type(
+        job_context, internship_id, "Internship"
+    )
+
+    response = job_context.get(
+        "/api/jobs/search", params={"employment_type": "contract"}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["total"] == 1
+    assert response.json()["items"][0]["id"] == contract_id
+
+
+def test_job_search_matches_multiple_employment_types(job_context):
+    multi_type_id = job_context.post(
+        "/api/jobs",
+        json={**valid_job(), "title": "Flexible Developer"},
+    ).json()["id"]
+
+    set_job_employment_type(
+        job_context, multi_type_id, "Full-time, Contract"
+    )
+
+    full_time = job_context.get(
+        "/api/jobs/search", params={"employment_type": "full-time"}
+    )
+    contract = job_context.get(
+        "/api/jobs/search", params={"employment_type": "contract"}
+    )
+
+    assert full_time.status_code == 200
+    assert contract.status_code == 200
+    assert full_time.json()["items"][0]["id"] == multi_type_id
+    assert contract.json()["items"][0]["id"] == multi_type_id
+
+
+def test_job_search_filters_unknown_employment_type(job_context):
+    known_id = job_context.post(
+        "/api/jobs",
+        json={**valid_job(), "title": "Known Type Developer"},
+    ).json()["id"]
+    unknown_id = job_context.post(
+        "/api/jobs",
+        json={
+            **valid_job(),
+            "title": "Unknown Type Developer",
+            "employment_type": None,
+        },
+    ).json()["id"]
+
+    set_job_employment_type(job_context, known_id, "Full-time")
+
+    response = job_context.get(
+        "/api/jobs/search", params={"employment_type": "unknown"}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["total"] == 1
+    assert response.json()["items"][0]["id"] == unknown_id
+
+
+def test_job_search_combines_employment_type_with_other_filters(
+    job_context,
+):
+    matching_id = job_context.post(
+        "/api/jobs",
+        json={
+            **valid_job(),
+            "title": "Remote Contract Developer",
+        },
+    ).json()["id"]
+    job_context.post(
+        "/api/jobs",
+        json={
+            **valid_job(),
+            "title": "Hybrid Contract Developer",
+        },
+    )
+
+    set_job_employment_type(
+        job_context, matching_id, "Contract"
+    )
+
+    with job_context.testing_session() as db:
+        job = db.get(Job, matching_id)
+        assert job is not None
+        job.remote_type = "remote"
+        db.commit()
+
+        other_jobs = db.query(Job).filter(
+            Job.title == "Hybrid Contract Developer"
+        ).all()
+        for other_job in other_jobs:
+            other_job.employment_type = "Contract"
+            other_job.remote_type = "hybrid"
+        db.commit()
+
+    response = job_context.get(
+        "/api/jobs/search",
+        params={
+            "employment_type": "contract",
+            "remote_type": "remote",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["total"] == 1
+    assert response.json()["items"][0]["id"] == matching_id
+
+
 def test_job_search_filters_remote_type(job_context):
     create_job_with_metadata(
         job_context, "Remote Python Developer",
@@ -691,6 +825,7 @@ def test_job_search_combines_text_and_metadata_filters(job_context):
         {"remote_type": "any"},
         {"eligibility_status": "maybe"},
         {"listing_status": "pending"},
+        {"employment_type": "temporary"},
     ],
 )
 def test_job_search_rejects_invalid_discovery_filters(
