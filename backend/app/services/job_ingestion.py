@@ -36,6 +36,9 @@ def _update_existing_job(existing: Job, fields: dict) -> None:
         elif field == "eligibility_status":
             if value != "unknown":
                 setattr(existing, field, value)
+        elif field == "application_url":
+            if existing.application_url is None:
+                setattr(existing, field, value)
         elif field == "listing_status":
             # Feed data must not overwrite a reviewed listing status.
             continue

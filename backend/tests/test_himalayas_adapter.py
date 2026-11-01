@@ -38,6 +38,9 @@ def test_normalize_job_maps_himalayas_fields():
         "https://himalayas.app/companies/example/jobs/python-dev"
     )
     assert result["source_url"] == (
+        "https://himalayas.app/companies/example/jobs/python-dev"
+    )
+    assert result["application_url"] == (
         "https://himalayas.app/jobs/apply/python-dev"
     )
     assert result["title"] == "Remote Python Developer"

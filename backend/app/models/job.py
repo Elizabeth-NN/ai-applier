@@ -32,6 +32,11 @@ class Job(Base):
     location: Mapped[str | None] = mapped_column(Text, nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    # Verified employer application page; separate from the discovery listing.
+    application_url: Mapped[str | None] = mapped_column(
+        String(2048),
+        nullable=True,
+    )
     employment_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
     # External source identity. Both remain nullable for manually created jobs.

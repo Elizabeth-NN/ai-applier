@@ -158,7 +158,7 @@ def test_cannot_prepare_another_users_application(preparation_context):
     assert exc.value.status_code == 404
 
 
-def test_rejects_job_without_application_url(preparation_context):
+def test_rejects_job_without_any_usable_url(preparation_context):
     with preparation_context["factory"]() as db:
         job = db.get(Job, preparation_context["job_id"])
         job.source_url = None
@@ -184,7 +184,7 @@ def test_rejects_job_without_application_url(preparation_context):
 def test_rejects_invalid_application_urls(preparation_context, url):
     with preparation_context["factory"]() as db:
         job = db.get(Job, preparation_context["job_id"])
-        job.source_url = url
+        job.application_url = url
         db.commit()
 
     with pytest.raises(HTTPException) as exc:
@@ -376,3 +376,36 @@ def test_cannot_review_execution_after_approval(preparation_context):
 
     assert exc.value.status_code == 409
 
+def test_uses_application_url_for_target_and_ats(preparation_context):
+    with preparation_context["factory"]() as db:
+        job = db.get(Job, preparation_context["job_id"])
+        job.application_url = (
+            "https://boards.greenhouse.io/example/jobs/123"
+        )
+        db.commit()
+
+    execution = prepare(preparation_context)
+
+    assert execution.target_url == (
+        "https://boards.greenhouse.io/example/jobs/123"
+    )
+    assert execution.ats_platform == "greenhouse"
+    assert execution.job_snapshot["source_url"] == (
+        "https://example.com/jobs/123"
+    )
+    assert execution.job_snapshot["application_url"] == (
+        "https://boards.greenhouse.io/example/jobs/123"
+    )
+
+def test_job_without_application_url_remains_reviewable(
+    preparation_context,
+):
+    execution = prepare(preparation_context)
+
+    assert execution.status == "prepared"
+    assert execution.target_url == "https://example.com/jobs/123"
+    assert execution.ats_platform == "unsupported"
+    assert execution.job_snapshot["source_url"] == (
+        "https://example.com/jobs/123"
+    )
+    assert execution.job_snapshot["application_url"] is None

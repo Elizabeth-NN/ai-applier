@@ -180,7 +180,16 @@ def prepare_application_execution(
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found.")
 
-    target_url = _validate_target_url(job.source_url)
+    source_url = job.source_url
+
+    application_url = (
+        _validate_target_url(job.application_url)
+        if job.application_url is not None
+        else None
+    )
+
+    # Unsupported jobs still need a safe reference URL for review.
+    target_url = application_url or _validate_target_url(source_url)
 
     resume = db.scalar(
         select(Resume).where(
@@ -263,7 +272,8 @@ def prepare_application_execution(
         "company": job.company,
         "location": job.location,
         "description": job.description,
-        "source_url": target_url,
+        "source_url": source_url,
+        "application_url": application_url,
         "employment_type": job.employment_type,
         "source_name": job.source_name,
         "remote_type": job.remote_type,
@@ -299,7 +309,11 @@ def prepare_application_execution(
         job_snapshot=job_snapshot,
         application_payload=application_payload,
         target_url=target_url,
-        ats_platform=_detect_ats_platform(target_url),
+        ats_platform=(
+            _detect_ats_platform(application_url)
+            if application_url is not None
+            else "unsupported"
+        ),
         status="prepared",
         idempotency_key=key,
     )

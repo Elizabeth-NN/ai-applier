@@ -10,6 +10,7 @@ class JobCreate(BaseModel):
     location: str | None = Field(default=None, max_length=255)
     description: str | None = None
     source_url: str | None = Field(default=None, max_length=2048)
+    application_url: str | None = Field(default=None, max_length=2048)
     employment_type: str | None = Field(default=None, max_length=100)
 
 
@@ -22,6 +23,7 @@ class JobRead(BaseModel):
     location: str | None
     description: str | None
     source_url: str | None
+    application_url: str | None
     employment_type: str | None
     source_name: str | None
     source_job_id: str | None

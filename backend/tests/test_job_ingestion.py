@@ -208,6 +208,9 @@ def incoming_himalayas_job(title="Remote Python Developer", expires_at=None):
             "https://himalayas.app/companies/example/jobs/python-developer"
             "?utm_source=api"
         ),
+        "application_url": (
+            "https://himalayas.app/jobs/apply/python-developer"
+        ),
         "employment_type": "Full-time",
         "source_name": "himalayas",
         "source_job_id": (
@@ -295,6 +298,31 @@ def test_himalayas_ingestion_preserves_verified_metadata(
     assert existing.listing_status == "active"
     assert existing.eligibility_evidence == "Reviewed evidence"
 
+
+def test_himalayas_ingestion_preserves_existing_application_url(
+    db_session, monkeypatch
+):
+    fields = incoming_himalayas_job()
+    existing = Job(**fields)
+    existing.application_url = (
+        "https://boards.greenhouse.io/example/jobs/123"
+    )
+    db_session.add(existing)
+    db_session.commit()
+
+    monkeypatch.setattr(
+        job_ingestion,
+        "fetch_himalayas_jobs",
+        lambda: [incoming_himalayas_job()],
+    )
+
+    job_ingestion.ingest_himalayas_jobs(db_session)
+    db_session.refresh(existing)
+
+    assert existing.application_url == (
+        "https://boards.greenhouse.io/example/jobs/123"
+    )
+    assert existing.source_url == fields["source_url"]
 
 def test_himalayas_ingestion_skips_new_expired_job(
     db_session, monkeypatch
