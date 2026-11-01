@@ -39,6 +39,7 @@ import ApplicationBatches from "@/components/ApplicationBatches";
 import ApplicationExecutions from "@/components/ApplicationExecutions";
 import CoverLetterDrafts from "@/components/CoverLetterDrafts";
 import MyDocuments from "@/components/MyDocuments";
+import ReusableAnswers from "@/components/ReusableAnswers";
 import Insights from "@/components/Insights";
 
 /* -------------------------------------------------------------------------- */
@@ -142,6 +143,7 @@ type PageName =
   | "Find Jobs"
   | "Resume Match"
   | "My Documents"
+  | "Reusable Answers"
   | "Cover Letter Drafts"
   | "Applications"
   | "Application Batches"
@@ -182,6 +184,7 @@ const navGroups: NavGroup[] = [
     heading: "Prepare",
     items: [
       { page: "My Documents", icon: Files },
+      { page: "Reusable Answers", icon: ChatsCircle },
       { page: "Cover Letter Drafts", icon: FileText },
     ],
   },
@@ -218,6 +221,10 @@ const pageMeta: Record<PageName, { title: string; description: string }> = {
   "My Documents": {
     title: "My documents",
     description: "Upload resumes and manage the documents you apply with.",
+  },
+  "Reusable Answers": {
+    title: "Reusable answers",
+    description: "Manage your own application answers and approve them before reuse.",
   },
   "Cover Letter Drafts": {
     title: "Cover letter drafts",
@@ -2682,6 +2689,9 @@ export default function DashboardPage() {
               {activePage === "My Documents" && (
                 <MyDocuments onOpenEditor={openDraftEditor} />
               )}
+
+              {/* ======================== Reusable Answers ======================== */}
+              {activePage === "Reusable Answers" && <ReusableAnswers />}
 
               {/* ======================== Cover Letter Drafts ======================== */}
               {activePage === "Cover Letter Drafts" && (
