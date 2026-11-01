@@ -1,6 +1,6 @@
 """API endpoints for preparing application executions."""
 
-from fastapi import APIRouter, Depends, Header, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -55,6 +55,44 @@ def list_application_executions(
         .limit(limit)
     )
     return db.scalars(statement).all()
+
+
+@router.delete(
+    "/{execution_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_application_execution(
+    execution_id: int,
+    user_id: CurrentUser,
+    db: Session = Depends(get_db),
+):
+    """Remove an execution owned by the authenticated user when safe."""
+    execution = db.scalar(
+        select(ApplicationExecution).where(
+            ApplicationExecution.id == execution_id,
+            ApplicationExecution.user_id == user_id,
+        )
+    )
+
+    if execution is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Application execution not found.",
+        )
+
+    protected_statuses = {"submitting", "submitted", "needs_attention"}
+    if execution.status in protected_statuses:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "This execution cannot be removed because its submission "
+                "is in progress, completed, or requires investigation."
+            ),
+        )
+
+    db.delete(execution)
+    db.commit()
+
 
 @router.post(
     "/prepare",

@@ -124,6 +124,68 @@ def prepare_execution(context):
     )
 
 
+def test_delete_execution_removes_execution_but_preserves_application(
+    execution_context,
+):
+    prepared = prepare_execution(execution_context)
+    assert prepared.status_code == 201
+    execution_id = prepared.json()["id"]
+
+    response = execution_context["client"].delete(
+        f"/api/application-executions/{execution_id}"
+    )
+
+    assert response.status_code == 204
+
+    listed = execution_context["client"].get(
+        "/api/application-executions"
+    )
+    assert listed.status_code == 200
+    assert listed.json() == []
+
+    with execution_context["db_factory"]() as db:
+        application = db.get(
+            Application,
+            execution_context["application_id"],
+        )
+        assert application is not None
+
+
+@pytest.mark.parametrize(
+    "protected_status",
+    ["submitting", "submitted", "needs_attention"],
+)
+def test_delete_execution_rejects_protected_submission_states(
+    execution_context,
+    protected_status,
+):
+    prepared = prepare_execution(execution_context)
+    assert prepared.status_code == 201
+    execution_id = prepared.json()["id"]
+
+    with execution_context["db_factory"]() as db:
+        execution = db.get(ApplicationExecution, execution_id)
+        execution.status = protected_status
+        db.commit()
+
+    response = execution_context["client"].delete(
+        f"/api/application-executions/{execution_id}"
+    )
+
+    assert response.status_code == 409
+
+    with execution_context["db_factory"]() as db:
+        assert db.get(ApplicationExecution, execution_id) is not None
+
+
+def test_delete_execution_returns_not_found_for_unknown_id(execution_context):
+    response = execution_context["client"].delete(
+        "/api/application-executions/999999"
+    )
+
+    assert response.status_code == 404
+
+
 def create_approved_candidate_answer(
     context,
     *,

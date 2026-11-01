@@ -287,6 +287,8 @@ function ExecutionCard({
   onGenerateHandoff,
   onCopyToken,
   onHideToken,
+  onRemoveExecution,
+  copied,
 }: {
   execution: ApplicationExecution;
   expanded: boolean;
@@ -302,6 +304,8 @@ function ExecutionCard({
   onGenerateHandoff: () => void;
   onCopyToken: () => void;
   onHideToken: () => void;
+  onRemoveExecution: () => void;
+  copied: boolean;
 }) {
   const job = execution.job_snapshot;
   const stage = getStage(execution);
@@ -460,6 +464,19 @@ function ExecutionCard({
             {expanded ? "Hide snapshot" : "View snapshot"}
           </button>
         )}
+
+        {!["submitting", "submitted", "needs_attention"].includes(
+          execution.status,
+        ) && (
+          <button
+            type="button"
+            onClick={onRemoveExecution}
+            disabled={busy}
+            className="rounded-lg border border-red-200 px-4 py-2 text-sm font-semibold text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {busy ? "Please wait..." : "Remove execution"}
+          </button>
+        )}
       </div>
 
       {/* Approval confirmation */}
@@ -507,8 +524,12 @@ function ExecutionCard({
             {handoff.token}
           </code>
           <div className="mt-3 flex flex-wrap gap-2">
-            <button type="button" onClick={onCopyToken} className={primaryBtn}>
-              Copy token
+            <button
+              type="button"
+              onClick={onCopyToken}
+              className={copied ? secondaryBtn : primaryBtn}
+            >
+              {copied ? "Copied!" : "Copy token"}
             </button>
             <button
               type="button"
@@ -518,6 +539,11 @@ function ExecutionCard({
               Hide token
             </button>
           </div>
+          {copied && (
+            <p className="mt-2 text-sm font-semibold text-emerald-700" role="status">
+              <span aria-hidden="true">✓ </span>Token copied to clipboard.
+            </p>
+          )}
           <p className="mt-3 text-xs leading-5 text-violet-800">
             Paste this token into the AI Applier Chrome extension. It works
             once and is not shown again after you hide it. Do not share it.
@@ -704,6 +730,8 @@ export default function ApplicationExecutions({ onNavigate }: Props) {
     (ExtensionHandoff & { executionId: number }) | null
   >(null);
   const [handoffLoadingId, setHandoffLoadingId] = useState<number | null>(null);
+  const [copiedTokenExecutionId, setCopiedTokenExecutionId] =
+    useState<number | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -1045,6 +1073,7 @@ export default function ApplicationExecutions({ onNavigate }: Props) {
       );
 
       setHandoff({ ...issued, executionId });
+      setCopiedTokenExecutionId(null);
       setNotice("One-time extension token created. Copy it into the extension.");
     } catch (err) {
       setError(
@@ -1062,11 +1091,69 @@ export default function ApplicationExecutions({ onNavigate }: Props) {
 
     try {
       await navigator.clipboard.writeText(handoff.token);
+      setCopiedTokenExecutionId(handoff.executionId);
       setError("");
       setNotice("Extension token copied to clipboard.");
     } catch {
+      setCopiedTokenExecutionId(null);
       setNotice("");
       setError("Could not copy the token. Select it and copy it manually.");
+    }
+  }
+
+  async function deleteExecution(executionId: number) {
+    const confirmed = window.confirm(
+      "Remove this execution record? The underlying application will not be deleted. This cannot be undone.",
+    );
+
+    if (!confirmed) return;
+
+    setError("");
+    setNotice("");
+    setActionId(executionId);
+
+    try {
+      const token = await getToken();
+
+      if (!token) throw new Error("Please sign in again.");
+
+      await apiRequest<void>(
+        `/api/application-executions/${executionId}`,
+        token,
+        { method: "DELETE" },
+      );
+
+      setExecutions((current) =>
+        current.filter((execution) => execution.id !== executionId),
+      );
+
+      setExpandedIds((current) => {
+        const next = new Set(current);
+        next.delete(executionId);
+        return next;
+      });
+
+      setConfirmApprovalId((current) =>
+        current === executionId ? null : current,
+      );
+
+      if (handoff?.executionId === executionId) {
+        setHandoff(null);
+      }
+
+      setCopiedTokenExecutionId((current) =>
+        current === executionId ? null : current,
+      );
+
+      setNotice("Execution removed. The underlying application was kept.");
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Could not remove this execution.",
+      );
+    } finally {
+      setActionId(null);
     }
   }
 
@@ -1443,7 +1530,12 @@ export default function ApplicationExecutions({ onNavigate }: Props) {
                   void generateExtensionHandoff(execution.id)
                 }
                 onCopyToken={() => void copyToken()}
-                onHideToken={() => setHandoff(null)}
+                onHideToken={() => {
+                  setHandoff(null);
+                  setCopiedTokenExecutionId(null);
+                }}
+                onRemoveExecution={() => void deleteExecution(execution.id)}
+                copied={copiedTokenExecutionId === execution.id}
               />
             ))}
           </div>
