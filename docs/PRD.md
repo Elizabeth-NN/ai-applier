@@ -75,11 +75,26 @@ Initial product priorities:
 - Keep generated content linked to the relevant job where appropriate.
 - Never claim a document was saved or generated unless the operation succeeded.
 
-#### F. Explainable job matching
-- Compare a job description with the candidate's available profile information.
-- Explain the main reasons a role appears relevant.
-- Identify missing or uncertain qualifications instead of fabricating them.
-- Clearly label the feature as unavailable until it is implemented and verified.
+#### F. Explainable resume-to-job matching
+
+**Implemented baseline:** Users can compare stored jobs with an uploaded PDF
+or DOCX resume through deterministic text matching.
+
+- Require an authenticated user and a resume owned by that user.
+- Compare job title, description, and explicit requirements with extracted
+  resume text.
+- Show a bounded relevance score, matched terms, missing textual evidence,
+  required/preferred requirement evidence, and human-readable match reasons.
+- Where possible, show which recognized resume sections contain requirement
+  terms.
+- Keep resume fit separate from Kenya eligibility and listing status.
+- Explain that missing text evidence does not prove the candidate lacks a
+  qualification, and that a match score is not a hiring probability.
+
+**Future improvements:** richer candidate profiles, more robust structured
+resume extraction, and AI-assisted matching may be considered separately.
+They must remain grounded in candidate-provided information and explainable
+to the user.
 
 #### G. User-controlled application workflow
 - Let the user review the destination, job, and application materials.

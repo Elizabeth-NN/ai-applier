@@ -70,6 +70,84 @@ The user interface labels these as Saved, Applied, Interview, Rejected, and Offe
 - [ ] Review `/docs` and `/openapi.json` in local development.
 - [ ] Add tests for authentication, ownership, validation, missing records, duplicates, and status updates.
 
+## Resume upload and matching
+
+Resume endpoints require authentication. Resume records and files are scoped
+to the authenticated user.
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/api/resumes` | Upload a PDF or DOCX resume (maximum 5 MB) |
+| GET | `/api/resumes` | List the authenticated user's resumes |
+| GET | `/api/resumes/{resume_id}/download` | Download an owned resume |
+| DELETE | `/api/resumes/{resume_id}` | Delete an owned resume and its stored file |
+| GET | `/api/jobs/matches` | Rank stored jobs against an owned resume |
+
+### Match request
+
+`GET /api/jobs/matches?resume_id=1&skip=0&limit=20`
+
+| Parameter | Required | Default | Constraints |
+|---|---|---|---|
+| `resume_id` | Yes | — | Integer, at least 1; must belong to the authenticated user |
+| `skip` | No | `0` | Integer, at least 0 |
+| `limit` | No | `20` | Integer, 1–100 |
+
+The endpoint extracts text from the selected PDF or DOCX resume, prepares
+matching features, parses recognized resume sections, and scores stored jobs.
+It ranks the complete result set before applying pagination.
+
+### Match response
+
+The response contains:
+
+- `resume_id` and `resume_filename`: the selected resume.
+- `items`: the current page of job records with matching information.
+- `total`: number of scored jobs before pagination.
+- `skip` and `limit`: pagination values.
+
+Each item extends the normal job representation with:
+
+| Field | Meaning |
+|---|---|
+| `match_score` | Bounded text-relevance score from 0 to 100 |
+| `matched_terms` | Informative terms found in both job text and resume text |
+| `terms_not_found_in_resume` | Informative job terms not located in extracted resume text |
+| `required_terms_found` | Explicit required terms found in the resume |
+| `required_terms_not_found` | Explicit required terms not located in the resume |
+| `preferred_terms_found` | Preferred terms found in the resume |
+| `preferred_terms_not_found` | Preferred terms not located in the resume |
+| `term_evidence` | Required/preferred term evidence grouped by recognized resume section |
+| `match_reasons` | Human-readable explanations of the text match |
+
+`term_evidence` maps requirement terms to section names such as `skills`,
+`experience`, `projects`, `summary`, `education`, and `certifications`.
+An empty section list means the parser did not locate that term in its
+recognized sections; it does not establish that the candidate lacks the skill.
+
+### Matching interpretation and limitations
+
+The current matcher is deterministic and text-based. Its component weights
+are 45% job-title overlap, 30% job-description overlap, and 25% explicit
+requirement overlap, with confidence adjustments for limited evidence.
+Preferred terms are reported separately and do not add a separate score
+component.
+
+Text normalization removes URLs, email addresses, and unambiguous
+multi-word employer-name noise. Corpus-wide term weighting gives more
+distinctive terms greater influence than generic terms.
+
+The score measures textual overlap, not hiring probability, verified
+proficiency, qualification equivalence, or likelihood of an interview.
+Missing textual evidence does not prove a candidate lacks a skill.
+Resume matching does not determine whether an employer accepts applicants
+from Kenya; geographic eligibility and listing status are separate checks.
+
+The parser recognizes configured resume headings and groups their content
+into sections. It is a lightweight section parser, not a complete extraction
+of employers, job titles, dates, or individual skill records. Results can
+depend on document formatting and heading recognition.
+
 ## Application execution routes
 
 The application-execution API supports preparation and a human-controlled

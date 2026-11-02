@@ -61,6 +61,49 @@ Observed files:
 
 The backend, not the browser, must enforce authorization and validate mutations.
 
+### Resume parsing and job matching
+
+The resume-to-job matching flow is implemented across these components:
+
+- `backend/app/api/resumes.py` — authenticated resume upload, listing,
+  download, deletion, and ownership checks.
+- `backend/app/services/resume_text.py` — PDF/DOCX text extraction.
+- `backend/app/services/structured_resume_parser.py` — deterministic
+  section recognition and grouping.
+- `backend/app/services/resume_job_matching.py` — text normalization,
+  feature preparation, corpus term weighting, scoring, requirement
+  classification, and section-level evidence.
+- `backend/app/api/jobs.py` — authenticated `GET /api/jobs/matches`
+  orchestration and pagination.
+- `backend/app/schemas/job.py` — typed match response schemas.
+
+The matching request selects an uploaded resume by `resume_id`. The backend
+resolves it using both the resume ID and authenticated user identity, checks
+the stored path, extracts its text, and prepares matching features.
+
+The structured parser recognizes common headings for summary, skills,
+experience, projects, education, certifications, contact information, and
+other sections. Section features are used to explain where requirement terms
+appear. This evidence is explanatory and does not change the relevance score.
+
+The matcher compares resume text with stored job titles, descriptions, and
+explicit requirements. Its component weights are 45% title overlap, 30%
+description overlap, and 25% requirement overlap. Confidence adjustments
+account for limited evidence. Preferred requirements are classified and
+reported separately.
+
+Job-corpus term weights are prepared independently of the selected resume.
+Jobs are scored and ranked before `skip`/`limit` pagination is applied.
+
+This baseline is deterministic; it does not require an AI provider call.
+The score represents textual relevance, not hiring probability or verified
+candidate proficiency. Geographic eligibility, listing status, and resume
+fit remain separate dimensions.
+
+The parser is intentionally lightweight. It groups text under recognized
+headings rather than extracting a complete structured employment history.
+Unknown headings and unusual document layouts can affect section evidence.
+
 ## 4. Authentication and authorization
 
 Clerk is the configured authentication provider. Frontend requests use a session token where required. The backend exposes `/api/me` and has authentication code in `backend/app/core/auth.py`.

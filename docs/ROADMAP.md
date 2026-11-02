@@ -40,11 +40,12 @@
 - [ ] Audit existing code for profile and resume functionality before implementation.
 - [ ] Define profile schema and validation.
 - [ ] Implement profile create/read/update operations and UI.
-- [ ] Decide supported resume formats, storage location, size limits, and deletion behavior.
-- [ ] Implement secure document upload and retrieval if required.
-- [ ] Add tests for file validation and user isolation.
+- [x] Support PDF and DOCX resume uploads with a 5 MB limit.
+- [x] Store resume files privately and scope listing, download, and deletion to the owner.
+- [x] Add resume file validation and ownership tests.
+- [x] Extract resume text for matching and document-generation workflows.
 
-**Exit gate:** a user can maintain their own profile and documents without exposing another user's data.
+**Exit gate:** a user can securely upload, access, and delete their own resume documents. Profile management remains outstanding.
 
 ## Phase 3 — Job ingestion and discovery
 
@@ -57,17 +58,22 @@
 
 **Exit gate:** the catalog can be populated and refreshed reliably, with duplicate and source behavior tested.
 
-## Phase 4 — AI assistance
+## Phase 4 — Matching and AI assistance
 
 - [ ] Select the provider/model and define cost and rate limits.
-- [ ] Define an explainable job-to-profile matching contract.
-- [ ] Generate matches from real job and profile data.
-- [ ] Explain evidence and missing requirements; avoid fabricated qualifications.
+- [x] Define and implement an explainable resume-to-job matching contract.
+- [x] Rank stored jobs against an authenticated user's uploaded resume.
+- [x] Explain matched terms, missing textual evidence, and required/preferred requirements.
+- [x] Show requirement evidence by recognized resume section.
+- [x] Keep resume relevance separate from geographic eligibility and listing status.
+- [x] Add deterministic regression tests for matching, requirement classification, and text-noise reduction.
+- [ ] Improve structured resume extraction beyond heading-based section grouping.
+- [ ] Evaluate AI-assisted matching separately from the deterministic baseline.
 - [ ] Generate editable, job-specific resume/cover-letter drafts.
 - [ ] Add timeouts, retries where appropriate, provider error handling, and tests.
 - [ ] Clearly distinguish generated suggestions from user-approved content.
 
-**Exit gate:** outputs are grounded in supplied data, reviewable, and fail safely when the provider is unavailable.
+**Exit gate:** deterministic matching is explainable and tested. Any future provider-backed outputs must be grounded in supplied data, reviewable, and fail safely when the provider is unavailable.
 
 ## Phase 5 — Application workflow
 
