@@ -1,5 +1,7 @@
 from app.services.resume_job_matching import (
     build_requirement_term_evidence,
+    build_term_weights,
+    prepare_job_matching_text,
     prepare_resume_section_features,
     score_resume_job_match,
 )
@@ -399,3 +401,79 @@ def test_requirement_evidence_identifies_all_matching_sections():
     assert evidence["node.js"] == ["skills", "projects"]
     assert evidence["fastapi"] == ["skills", "projects"]
     assert evidence["kubernetes"] == []
+
+
+
+def test_matching_excludes_urls_emails_and_multiword_company_names():
+    result = score_resume_job_match(
+        "Python developer building backend APIs.",
+        title="Example Tech Python Developer",
+        description=(
+            "Example Tech is hiring. "
+            "Apply at https://example.com/jobs. "
+            "Contact recruiter@example.com. "
+            "Requirements: Python and FastAPI."
+        ),
+        company="Example Tech",
+    )
+
+    combined_terms = (
+        result["matched_terms"] + result["terms_not_found_in_resume"]
+    )
+    combined_text = " ".join(combined_terms).lower()
+
+    assert "python" in result["matched_terms"]
+    assert "example" not in combined_text
+    assert "tech" not in combined_text
+    assert "recruiter" not in combined_text
+    assert "example.com" not in combined_text
+    assert "fastapi" in result["terms_not_found_in_resume"]
+
+
+def test_single_word_company_name_does_not_remove_a_technical_skill():
+    result = score_resume_job_match(
+        "Built backend services using Go.",
+        title="Go Developer",
+        description="Build Go services and APIs.",
+        company="Go",
+    )
+
+    assert "go" in result["matched_terms"]
+
+
+def test_requirement_evidence_excludes_multiword_company_name():
+    evidence = build_requirement_term_evidence(
+        (
+            "Example Tech is hiring. "
+            "Apply at https://example.com/jobs.\n"
+            "Requirements:\n"
+            "Python and FastAPI."
+        ),
+        {"skills": frozenset({"python"})},
+        company="Example Tech",
+    )
+
+    assert "python" in evidence
+    assert "fastapi" in evidence
+    assert "example" not in evidence
+    assert "tech" not in evidence
+
+
+def test_corpus_matching_text_excludes_contact_and_company_noise():
+    cleaned = prepare_job_matching_text(
+        "Example Tech Python Developer",
+        (
+            "Apply at https://example.com/jobs. "
+            "Email recruiter@example.com. "
+            "Requirements: Python and FastAPI."
+        ),
+        company="Example Tech",
+    )
+
+    weights = build_term_weights([cleaned])
+
+    assert "python" in weights
+    assert "fastapi" in weights
+    assert "example" not in weights
+    assert "tech" not in weights
+    assert "recruiter" not in weights

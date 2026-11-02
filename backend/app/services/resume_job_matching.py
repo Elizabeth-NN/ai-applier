@@ -187,27 +187,54 @@ PREFERRED_MARKER_RE = re.compile(
 
 # --- Text cleaning ----------------------------------------------------------
 
-BLOCK_TAG_RE = re.compile(r"</?(?:br|p|li|ul|ol|div|h[1-6]|tr)\b[^>]*>", re.IGNORECASE)
+BLOCK_TAG_RE = re.compile(
+    r"</?(?:br|p|li|ul|ol|div|h[1-6]|tr)\b[^>]*>",
+    re.IGNORECASE,
+)
 TAG_RE = re.compile(r"</?[a-zA-Z][^>]*>")
-NEGATED_CONTRACTION_RE = re.compile(r"\b\w+n['\u2019]t\b", re.IGNORECASE)
-CONTRACTION_SUFFIX_RE = re.compile(r"['\u2019](?:s|re|ve|ll|d|m)\b", re.IGNORECASE)
+URL_EMAIL_RE = re.compile(
+    r"\b(?:https?://|www\.)[^\s<>()]+"
+    r"|(?<![\w.+-])[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b",
+    re.IGNORECASE,
+)
+NEGATED_CONTRACTION_RE = re.compile(r"\b\w+n['’]t\b", re.IGNORECASE)
+CONTRACTION_SUFFIX_RE = re.compile(r"['’](?:s|re|ve|ll|d|m)\b", re.IGNORECASE)
 
 
-def _clean_text(text: str) -> str:
-    """Remove HTML and contraction debris that would otherwise become terms.
-
-    Without this, "&amp;" yields the term "amp", "<br>" yields "br" and
-    "don't" yields "don".
-    """
+def _clean_text(text: str, company: str | None = None) -> str:
+    """Remove markup, contact links, and unambiguous employer-name noise."""
     text = html.unescape(text)
-    # Block-level tags become one line break; runs such as "</p><ul><li>"
-    # collapse to a single break so they never look like a blank line (which
-    # would end a "Requirements:" block).
+    text = URL_EMAIL_RE.sub(" ", text)
+
+    # Only remove multi-word employer names. A single word could also be a
+    # legitimate technology term (for example, "Go").
+    company_parts = (company or "").split()
+    if len(company_parts) >= 2:
+        company_pattern = (
+            r"(?<![A-Za-z0-9])"
+            + r"\s+".join(re.escape(part) for part in company_parts)
+            + r"(?![A-Za-z0-9])"
+        )
+        text = re.sub(company_pattern, " ", text, flags=re.IGNORECASE)
+
+    # Preserve block boundaries so requirement sections remain detectable.
     text = BLOCK_TAG_RE.sub("\x00", text)
     text = re.sub(r"\x00+", "\n", text)
     text = TAG_RE.sub(" ", text)
     text = NEGATED_CONTRACTION_RE.sub(" ", text)
     return CONTRACTION_SUFFIX_RE.sub("", text)
+
+
+def prepare_job_matching_text(
+    title: str | None,
+    description: str | None,
+    company: str | None = None,
+) -> str:
+    """Prepare consistent, noise-reduced text for corpus term weighting."""
+    return _clean_text(
+        f"{title or ''}\n{description or ''}",
+        company,
+    )
 
 
 # --- Tokenization -----------------------------------------------------------
@@ -595,10 +622,12 @@ def prepare_resume_section_features(
 def build_requirement_term_evidence(
     description: str | None,
     section_features: Mapping[str, frozenset[str]],
+    company: str | None = None,
 ) -> dict[str, list[str]]:
     """Show which resume sections contain each required or preferred term."""
+    cleaned_description = _clean_text(description or "", company)
     required_terms, preferred_terms = _requirement_classifications(
-        description or ""
+        cleaned_description
     )
 
     evidence = {}
@@ -619,6 +648,7 @@ def score_resume_job_match(
     *,
     title: str,
     description: str | None,
+    company: str | None = None,
     employment_type: str | None = None,  # Accepted for API compatibility; not scored.
     prepared_resume_features: frozenset[str] | None = None,
     term_weights: Mapping[str, float] | None = None,
@@ -637,11 +667,14 @@ def score_resume_job_match(
 
     weigh = _make_weigher(term_weights)
 
-    title_tokens, title_phrases = _evidence(title or "")
-    description_tokens, description_phrases = _evidence(description or "")
+    cleaned_title = _clean_text(title or "", company)
+    cleaned_description = _clean_text(description or "", company)
+
+    title_tokens, title_phrases = _evidence(cleaned_title)
+    description_tokens, description_phrases = _evidence(cleaned_description)
 
     required_terms, preferred_terms = _requirement_classifications(
-        description or ""
+        cleaned_description
     )
     requirement_tokens = required_terms
 

@@ -16,6 +16,7 @@ from app.services.structured_resume_parser import parse_resume_text
 from app.services.resume_job_matching import (
     build_requirement_term_evidence,
     build_term_weights,
+    prepare_job_matching_text,
     prepare_resume_features,
     prepare_resume_section_features,
     score_resume_job_match,
@@ -69,7 +70,8 @@ def _corpus_term_weights(job_rows) -> dict[str, float]:
             return _term_weight_cache["weights"]
 
     weights = build_term_weights(
-        f"{row.title or ''}\n{row.description or ''}" for row in job_rows
+        prepare_job_matching_text(row.title, row.description, row.company)
+        for row in job_rows
     )
 
     with _term_weight_lock:
@@ -456,7 +458,13 @@ def match_jobs_to_resume(
     # Score from lightweight rows; full Job objects are only loaded for the
     # page that is returned.
     job_rows = db.execute(
-        select(Job.id, Job.title, Job.description, Job.created_at)
+        select(
+            Job.id,
+            Job.title,
+            Job.company,
+            Job.description,
+            Job.created_at,
+        )
     ).all()
 
     # Corpus-wide term weights make distinctive skills count for more than
@@ -469,12 +477,14 @@ def match_jobs_to_resume(
             "",
             title=row.title,
             description=row.description,
+            company=row.company,
             prepared_resume_features=prepared_resume_features,
             term_weights=term_weights,
         )
         match["term_evidence"] = build_requirement_term_evidence(
             row.description,
             section_features,
+            company=row.company,
         )
         scored.append((row, match))
 
