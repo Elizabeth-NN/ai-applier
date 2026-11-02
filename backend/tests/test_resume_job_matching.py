@@ -1,4 +1,6 @@
 from app.services.resume_job_matching import (
+    build_requirement_term_evidence,
+    prepare_resume_section_features,
     score_resume_job_match,
 )
 
@@ -347,3 +349,53 @@ def test_required_and_preferred_skills_are_separated_without_comma():
     assert "python" not in preferred
     assert "docker" in preferred
     assert "docker" not in required
+
+
+def test_resume_section_features_are_prepared_independently():
+    structured_resume = {
+        "skills": [{"text": "Python, FastAPI, PostgreSQL"}],
+        "experience": [{"text": "Built Python backend APIs"}],
+        "projects": [{"text": "Created a React application"}],
+        "education": [{"text": "Software Engineering"}],
+        "certifications": [{"text": "AWS Cloud Practitioner"}],
+        "summary": [{"text": "Backend developer using Python"}],
+    }
+
+    features = prepare_resume_section_features(structured_resume)
+
+    assert "python" in features["skills"]
+    assert "python" in features["experience"]
+    assert "python" in features["summary"]
+    assert "react" in features["projects"]
+    assert "softwar engin" in features["education"]
+    assert "aws" in features["certifications"]
+    assert "react" not in features["skills"]
+
+
+def test_requirement_evidence_identifies_all_matching_sections():
+    structured_resume = {
+        "skills": [{"text": "Python, NodeJS, FastAPI"}],
+        "experience": [{"text": "Built Python APIs"}],
+        "projects": [{"text": "Created a Node.js service using FastAPI"}],
+        "education": [{"text": "Software Engineering"}],
+        "certifications": [],
+        "summary": [{"text": "Python backend developer"}],
+    }
+
+    section_features = prepare_resume_section_features(structured_resume)
+
+    evidence = build_requirement_term_evidence(
+        (
+            "Required qualifications:\n"
+            "- Python\n"
+            "- Node.js\n"
+            "- FastAPI\n"
+            "- Kubernetes"
+        ),
+        section_features,
+    )
+
+    assert evidence["python"] == ["skills", "experience", "summary"]
+    assert evidence["node.js"] == ["skills", "projects"]
+    assert evidence["fastapi"] == ["skills", "projects"]
+    assert evidence["kubernetes"] == []

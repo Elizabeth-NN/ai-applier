@@ -297,3 +297,57 @@ def test_resume_extraction_errors_are_returned_safely(match_context, monkeypatch
 
     assert response.status_code == 422
     assert response.json()["detail"] == "Resume text unavailable"
+
+
+def test_matches_include_resume_section_evidence(match_context, monkeypatch):
+    resume_id = create_resume(match_context)
+
+    resume_text = """PROFESSIONAL SUMMARY
+Python backend developer.
+
+TECHNICAL SKILLS
+Python, FastAPI
+
+PROFESSIONAL EXPERIENCE
+Built APIs using Python.
+
+PROJECTS
+Created a FastAPI service with Docker.
+
+EDUCATION
+Bachelor of Science in Software Engineering.
+"""
+
+    monkeypatch.setattr(
+        jobs_api,
+        "extract_resume_text",
+        lambda _path, _filename: resume_text,
+    )
+
+    create_job(
+        match_context,
+        title="Python Backend Developer",
+        description=(
+            "Required qualifications:\n"
+            "- Python\n"
+            "- FastAPI\n"
+            "- Kubernetes\n\n"
+            "Preferred qualifications:\n"
+            "- Docker\n"
+            "- AWS"
+        ),
+    )
+
+    response = match_context["client"].get(
+        f"/api/jobs/matches?resume_id={resume_id}"
+    )
+
+    assert response.status_code == 200, response.text
+    item = response.json()["items"][0]
+    evidence = item["term_evidence"]
+
+    assert evidence["python"] == ["skills", "experience", "summary"]
+    assert evidence["fastapi"] == ["skills", "projects"]
+    assert evidence["kubernetes"] == []
+    assert evidence["docker"] == ["projects"]
+    assert evidence["aws"] == []

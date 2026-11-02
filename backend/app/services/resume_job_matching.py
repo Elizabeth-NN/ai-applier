@@ -564,6 +564,56 @@ def _limit_terms(
     return tokens[:token_quota] + phrases[:phrase_quota]
 
 
+RESUME_EVIDENCE_SECTIONS = (
+    "skills",
+    "experience",
+    "projects",
+    "summary",
+    "education",
+    "certifications",
+)
+
+
+def prepare_resume_section_features(
+    structured_resume: Mapping[str, object],
+) -> dict[str, frozenset[str]]:
+    """Prepare normalized matching features for each useful resume section."""
+    section_features = {}
+
+    for section in RESUME_EVIDENCE_SECTIONS:
+        entries = structured_resume.get(section, [])
+        section_text = "\\n".join(
+            str(entry.get("text", ""))
+            for entry in entries
+            if isinstance(entry, Mapping)
+        )
+        section_features[section] = prepare_resume_features(section_text)
+
+    return section_features
+
+
+def build_requirement_term_evidence(
+    description: str | None,
+    section_features: Mapping[str, frozenset[str]],
+) -> dict[str, list[str]]:
+    """Show which resume sections contain each required or preferred term."""
+    required_terms, preferred_terms = _requirement_classifications(
+        description or ""
+    )
+
+    evidence = {}
+
+    for term in sorted(required_terms | preferred_terms):
+        term_key = _term_key(term)
+        evidence[term] = [
+            section
+            for section in RESUME_EVIDENCE_SECTIONS
+            if term_key in section_features.get(section, frozenset())
+        ]
+
+    return evidence
+
+
 def score_resume_job_match(
     resume_text: str,
     *,

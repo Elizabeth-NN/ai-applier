@@ -96,6 +96,7 @@ class ResumeJobMatchItem(JobRead):
     required_terms_not_found: list[str]
     preferred_terms_found: list[str]
     preferred_terms_not_found: list[str]
+    term_evidence: dict[str, list[str]]
     match_reasons: list[str]
 
 

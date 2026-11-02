@@ -12,9 +12,12 @@ from app.api import resumes as resumes_api
 from app.db.dependencies import get_db
 from app.models.job import Job
 from app.services.resume_text import extract_resume_text
+from app.services.structured_resume_parser import parse_resume_text
 from app.services.resume_job_matching import (
+    build_requirement_term_evidence,
     build_term_weights,
     prepare_resume_features,
+    prepare_resume_section_features,
     score_resume_job_match,
 )
 from app.schemas.job import (
@@ -445,6 +448,11 @@ def match_jobs_to_resume(
 
     prepared_resume_features = prepare_resume_features(resume_text)
 
+    # Parse once per request; section evidence explains where requirements
+    # appear without changing the existing relevance score.
+    structured_resume = parse_resume_text(resume_text)
+    section_features = prepare_resume_section_features(structured_resume)
+
     # Score from lightweight rows; full Job objects are only loaded for the
     # page that is returned.
     job_rows = db.execute(
@@ -463,6 +471,10 @@ def match_jobs_to_resume(
             description=row.description,
             prepared_resume_features=prepared_resume_features,
             term_weights=term_weights,
+        )
+        match["term_evidence"] = build_requirement_term_evidence(
+            row.description,
+            section_features,
         )
         scored.append((row, match))
 
