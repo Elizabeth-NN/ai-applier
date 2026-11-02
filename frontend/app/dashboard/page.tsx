@@ -95,6 +95,10 @@ type ResumeJobMatch = ApiJob & {
   match_score: number;
   matched_terms: string[];
   terms_not_found_in_resume: string[];
+  required_terms_found: string[];
+  required_terms_not_found: string[];
+  preferred_terms_found: string[];
+  preferred_terms_not_found: string[];
   match_reasons: string[];
 };
 
@@ -1088,6 +1092,59 @@ function ResumeMatchCard({
           </p>
         </div>
       )}
+
+      {[
+        {
+          label: "Required",
+          found: match.required_terms_found,
+          notFound: match.required_terms_not_found,
+        },
+        {
+          label: "Preferred",
+          found: match.preferred_terms_found,
+          notFound: match.preferred_terms_not_found,
+        },
+      ].map(({ label, found, notFound }) => (
+        (found.length > 0 || notFound.length > 0) && (
+          <div key={label} className="mt-4">
+            <p className="text-xs font-bold tracking-wide text-slate-500 uppercase">
+              {label} requirements
+            </p>
+
+            {found.length > 0 && (
+              <div className="mt-2">
+                <p className="text-xs text-slate-500">Found in resume</p>
+                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  {found.map((term) => (
+                    <span
+                      key={term}
+                      className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-800"
+                    >
+                      {term}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {notFound.length > 0 && (
+              <div className="mt-2">
+                <p className="text-xs text-slate-500">Not found in resume</p>
+                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  {notFound.map((term) => (
+                    <span
+                      key={term}
+                      className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-800"
+                    >
+                      {term}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )
+      ))}
 
       <div className="mt-4 flex flex-wrap items-center gap-3">
         {match.source_url && (
