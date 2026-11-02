@@ -99,6 +99,7 @@ type ResumeJobMatch = ApiJob & {
   required_terms_not_found: string[];
   preferred_terms_found: string[];
   preferred_terms_not_found: string[];
+  term_evidence: Record<string, string[]>;
   match_reasons: string[];
 };
 
@@ -1145,6 +1146,49 @@ function ResumeMatchCard({
           </div>
         )
       ))}
+
+      {Object.entries(match.term_evidence).length > 0 && (
+        <div className="mt-5 border-t border-slate-100 pt-4">
+          <p className="text-xs font-bold tracking-wide text-slate-500 uppercase">
+            Requirement evidence by resume section
+          </p>
+
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            {Object.entries(match.term_evidence).map(([term, sections]) => (
+              <div
+                key={term}
+                className="rounded-lg border border-slate-100 bg-slate-50 p-3"
+              >
+                <p className="text-sm font-semibold text-slate-800">
+                  {term}
+                </p>
+
+                {sections.length > 0 ? (
+                  <p className="mt-1 text-xs text-slate-600">
+                    Located in:{" "}
+                    {sections
+                      .map(
+                        (section) =>
+                          section.charAt(0).toUpperCase() + section.slice(1),
+                      )
+                      .join(", ")}
+                  </p>
+                ) : (
+                  <p className="mt-1 text-xs text-slate-500">
+                    Not located in parsed sections
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
+
+          <p className="mt-2 text-xs text-slate-500">
+            Section locations depend on recognized resume headings and
+            document formatting. An unlocated term does not mean you lack
+            that skill.
+          </p>
+        </div>
+      )}
 
       <div className="mt-4 flex flex-wrap items-center gap-3">
         {match.source_url && (
