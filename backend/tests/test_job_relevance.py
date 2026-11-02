@@ -98,3 +98,72 @@ def test_target_role_families(title, expected_family):
     result = score_job_relevance({"title": title})
 
     assert expected_family in result["matched_role_families"]
+
+
+@pytest.mark.parametrize(
+    ("job", "expected"),
+    [
+        ({"title": "Software Engineering Intern"}, "internship"),
+        (
+            {"title": "Python Developer", "employment_type": "Internship"},
+            "internship",
+        ),
+        ({"title": "Graduate Software Engineer"}, "entry-level"),
+        ({"title": "New Grad Backend Developer"}, "entry-level"),
+        ({"title": "Trainee Python Developer"}, "entry-level"),
+        ({"title": "Junior Python Developer"}, "junior"),
+        ({"title": "Jr. Software Engineer"}, "junior"),
+        ({"title": "Mid-Level Backend Engineer"}, "mid-level"),
+        ({"title": "Intermediate Software Developer"}, "mid-level"),
+        ({"title": "Senior Python Engineer"}, "senior"),
+        ({"title": "Staff Software Engineer"}, "senior"),
+        ({"title": "Principal Engineer"}, "senior"),
+        ({"title": "Lead Engineer"}, "senior"),
+    ],
+)
+def test_classifies_experience_level_from_job_title(job, expected):
+    from app.services.job_relevance import classify_experience_level
+
+    assert classify_experience_level(job) == expected
+
+
+@pytest.mark.parametrize(
+    ("description", "expected"),
+    [
+        ("This is an entry-level role for a new graduate.", "entry-level"),
+        ("This junior position is suitable for early-career developers.", "junior"),
+        ("We are hiring for a mid-level role.", "mid-level"),
+        ("This is a senior-level position.", "senior"),
+    ],
+)
+def test_classifies_explicit_experience_level_from_description(
+    description, expected
+):
+    from app.services.job_relevance import classify_experience_level
+
+    assert classify_experience_level(
+        {"title": "Software Engineer", "description": description}
+    ) == expected
+
+
+@pytest.mark.parametrize(
+    "job",
+    [
+        {},
+        {"title": "Software Engineer"},
+        {"title": "Python Developer", "description": "Requires 3 years of experience."},
+        {
+            "title": "Python Developer",
+            "description": "You will work with senior engineers.",
+        },
+        {
+            "title": "Junior Python Developer",
+            "description": "This is a senior-level position.",
+        },
+        {"title": "Associate Software Engineer"},
+    ],
+)
+def test_returns_unknown_when_experience_level_is_not_clear(job):
+    from app.services.job_relevance import classify_experience_level
+
+    assert classify_experience_level(job) == "unknown"

@@ -76,6 +76,7 @@ class JobSearchItem(JobRead):
     relevance_score: int = Field(ge=0, le=100)
     matched_role_families: list[str]
     relevance_reasons: list[str]
+    experience_level: str
 
 
 class JobSearchResult(BaseModel):

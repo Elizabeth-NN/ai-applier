@@ -33,7 +33,10 @@ from app.services.job_ingestion import (
 from app.services.himalayas_adapter import HimalayasAPIError
 from app.services.jobicy_adapter import JobicyAPIError
 from app.services.job_status_sync import sync_jobicy_statuses
-from app.services.job_relevance import score_job_relevance
+from app.services.job_relevance import (
+    classify_experience_level,
+    score_job_relevance,
+)
 
 
 router = APIRouter(prefix="/api/jobs", tags=["Jobs"])
@@ -135,6 +138,10 @@ def search_jobs(
         default=None,
         pattern="^(full-time|part-time|contract|internship|unknown)$",
     ),
+    experience_level: str | None = Query(
+        default=None,
+        pattern="^(entry-level|junior|mid-level|senior|internship|unknown)$",
+    ),
     sort_by: str = Query(default="newest", pattern="^(newest|relevance)$"),
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=20, ge=1, le=100),
@@ -195,22 +202,45 @@ def search_jobs(
         statement = statement.where(*filters)
         count_statement = count_statement.where(*filters)
 
-    total = db.scalar(count_statement) or 0
-
-    if sort_by == "relevance":
-        # Score every matching job before pagination so the order is global,
-        # not limited to the newest page.
+    if experience_level is not None:
+        # Experience level is derived from listing text, so classify candidate
+        # jobs before calculating totals and applying pagination.
         items = db.scalars(
             statement.order_by(Job.created_at.desc(), Job.id.desc())
         ).all()
+
+        items = [
+            job
+            for job in items
+            if classify_experience_level(
+                {
+                    "title": job.title,
+                    "description": job.description,
+                    "employment_type": job.employment_type,
+                }
+            ) == experience_level
+        ]
+        total = len(items)
+
+        if sort_by != "relevance":
+            items = items[skip : skip + limit]
     else:
-        # Preserve the existing efficient newest-first behavior.
-        items = db.scalars(
-            statement
-            .order_by(Job.created_at.desc(), Job.id.desc())
-            .offset(skip)
-            .limit(limit)
-        ).all()
+        total = db.scalar(count_statement) or 0
+
+        if sort_by == "relevance":
+            # Score every matching job before pagination so the order is global,
+            # not limited to the newest page.
+            items = db.scalars(
+                statement.order_by(Job.created_at.desc(), Job.id.desc())
+            ).all()
+        else:
+            # Preserve the existing efficient newest-first behavior.
+            items = db.scalars(
+                statement
+                .order_by(Job.created_at.desc(), Job.id.desc())
+                .offset(skip)
+                .limit(limit)
+            ).all()
 
     search_items = []
     for job in items:
@@ -228,6 +258,13 @@ def search_jobs(
                 "relevance_score": relevance["score"],
                 "matched_role_families": relevance["matched_role_families"],
                 "relevance_reasons": relevance["reasons"],
+                "experience_level": classify_experience_level(
+                    {
+                        "title": job.title,
+                        "description": job.description,
+                        "employment_type": job.employment_type,
+                    }
+                ),
             }
         )
 

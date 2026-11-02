@@ -1320,3 +1320,165 @@ def test_ingestion_invalidates_matching_cache_only_when_jobs_change(
     assert len(invalidations) == (
         1 if result_name == "changed_result" else 0
     )
+
+
+@pytest.mark.parametrize(
+    ("title", "expected_level"),
+    [
+        ("Graduate Python Developer", "entry-level"),
+        ("Junior Python Developer", "junior"),
+        ("Mid-Level Backend Engineer", "mid-level"),
+        ("Senior Python Engineer", "senior"),
+        ("Software Engineering Intern", "internship"),
+        ("Software Developer", "unknown"),
+    ],
+)
+def test_job_search_returns_experience_level(
+    job_context, title, expected_level
+):
+    created = job_context.post(
+        "/api/jobs",
+        json={**valid_job(), "title": title},
+    )
+    assert created.status_code == 201
+
+    response = job_context.get("/api/jobs/search")
+
+    assert response.status_code == 200
+    matching = next(
+        item for item in response.json()["items"]
+        if item["id"] == created.json()["id"]
+    )
+    assert matching["experience_level"] == expected_level
+
+
+def test_job_search_filters_experience_level_with_accurate_pagination(
+    job_context,
+):
+    junior_ids = []
+    for index in range(3):
+        response = job_context.post(
+            "/api/jobs",
+            json={
+                **valid_job(),
+                "title": f"Junior Python Developer {index}",
+            },
+        )
+        junior_ids.append(response.json()["id"])
+
+    job_context.post(
+        "/api/jobs",
+        json={
+            **valid_job(),
+            "title": "Senior Python Engineer",
+        },
+    )
+
+    first_page = job_context.get(
+        "/api/jobs/search",
+        params={
+            "experience_level": "junior",
+            "skip": 0,
+            "limit": 2,
+        },
+    )
+    second_page = job_context.get(
+        "/api/jobs/search",
+        params={
+            "experience_level": "junior",
+            "skip": 2,
+            "limit": 2,
+        },
+    )
+
+    assert first_page.status_code == 200
+    assert first_page.json()["total"] == 3
+    assert len(first_page.json()["items"]) == 2
+
+    assert second_page.status_code == 200
+    assert second_page.json()["total"] == 3
+    assert len(second_page.json()["items"]) == 1
+
+    first_ids = {
+        item["id"] for item in first_page.json()["items"]
+    }
+    second_ids = {
+        item["id"] for item in second_page.json()["items"]
+    }
+
+    assert first_ids.isdisjoint(second_ids)
+    assert first_ids | second_ids == set(junior_ids)
+
+
+def test_job_search_combines_experience_level_with_text_filter(
+    job_context,
+):
+    junior_id = job_context.post(
+        "/api/jobs",
+        json={
+            **valid_job(),
+            "title": "Junior Python Developer",
+        },
+    ).json()["id"]
+
+    job_context.post(
+        "/api/jobs",
+        json={
+            **valid_job(),
+            "title": "Senior Python Developer",
+        },
+    )
+
+    job_context.post(
+        "/api/jobs",
+        json={
+            **valid_job(),
+            "title": "Junior React Developer",
+        },
+    )
+
+    response = job_context.get(
+        "/api/jobs/search",
+        params={
+            "q": "Python",
+            "experience_level": "junior",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["total"] == 1
+    assert response.json()["items"][0]["id"] == junior_id
+
+
+def test_job_search_experience_filter_does_not_change_eligibility(
+    job_context,
+):
+    created = job_context.post(
+        "/api/jobs",
+        json={
+            **valid_job(),
+            "title": "Junior Python Developer",
+        },
+    )
+    job_id = created.json()["id"]
+
+    response = job_context.get(
+        "/api/jobs/search",
+        params={"experience_level": "junior"},
+    )
+
+    assert response.status_code == 200
+    item = response.json()["items"][0]
+
+    assert item["id"] == job_id
+    assert item["experience_level"] == "junior"
+    assert item["eligibility_status"] == "unknown"
+
+
+def test_job_search_rejects_invalid_experience_level(job_context):
+    response = job_context.get(
+        "/api/jobs/search",
+        params={"experience_level": "expert"},
+    )
+
+    assert response.status_code == 422

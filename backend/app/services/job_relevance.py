@@ -127,3 +127,93 @@ def score_job_relevance(job: Mapping[str, Any]) -> dict[str, Any]:
         "matched_role_families": matched_families,
         "reasons": reasons,
     }
+
+
+def classify_experience_level(job: Mapping[str, Any]) -> str:
+    """Classify a job using explicit experience-level evidence.
+
+    Returns one of: internship, entry-level, junior, mid-level, senior,
+    or unknown.
+
+    Ambiguous or conflicting evidence is deliberately classified as unknown.
+    This is a listing-text classification, not a judgement of applicant
+    suitability or hiring eligibility.
+    """
+    title = str(job.get("title") or "").casefold()
+    description = str(job.get("description") or "").casefold()
+    employment_type = str(job.get("employment_type") or "").casefold()
+
+    # Internship is a distinct employment category and takes precedence.
+    if (
+        _contains_phrase(title, "intern")
+        or _contains_phrase(title, "internship")
+        or _contains_phrase(employment_type, "internship")
+    ):
+        return "internship"
+
+    title_patterns = {
+        "entry-level": (
+            "entry-level",
+            "entry level",
+            "graduate",
+            "new grad",
+            "new graduate",
+            "trainee",
+        ),
+        "junior": ("junior", "jr."),
+        "mid-level": (
+            "mid-level",
+            "mid level",
+            "intermediate",
+        ),
+        "senior": (
+            "senior",
+            "staff engineer",
+            "staff software engineer",
+            "principal",
+            "lead engineer",
+            "lead developer",
+            "engineering manager",
+            "director of engineering",
+            "head of engineering",
+        ),
+    }
+
+    signals = {
+        level
+        for level, phrases in title_patterns.items()
+        if any(_contains_phrase(title, phrase) for phrase in phrases)
+    }
+
+    # Only accept explicit level descriptions tied to a role or position.
+    # Mentions such as "work with senior engineers" are not classification
+    # evidence.
+    description_patterns = {
+        "entry-level": (
+            r"\bentry[- ]level\s+(?:role|position|opportunity)\b",
+            r"\b(?:role|position|opportunity)\s+is\s+entry[- ]level\b",
+        ),
+        "junior": (
+            r"\bjunior\s+(?:role|position|opportunity)\b",
+            r"\b(?:role|position|opportunity)\s+is\s+junior\b",
+        ),
+        "mid-level": (
+            r"\b(?:mid[- ]level|intermediate)\s+"
+            r"(?:role|position|opportunity)\b",
+            r"\b(?:role|position|opportunity)\s+is\s+"
+            r"(?:mid[- ]level|intermediate)\b",
+        ),
+        "senior": (
+            r"\bsenior[- ]level\s+(?:role|position|opportunity)\b",
+            r"\b(?:role|position|opportunity)\s+is\s+senior[- ]level\b",
+        ),
+    }
+
+    for level, patterns in description_patterns.items():
+        if any(re.search(pattern, description) for pattern in patterns):
+            signals.add(level)
+
+    if len(signals) == 1:
+        return signals.pop()
+
+    return "unknown"
