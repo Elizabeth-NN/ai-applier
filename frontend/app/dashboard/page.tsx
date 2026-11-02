@@ -59,6 +59,7 @@ type ApiJob = {
   expires_at: string | null;
   remote_type: string | null;
   employment_type: string | null;
+  experience_level: string;
   eligible_countries: string[] | null;
   eligibility_status: string;
   eligibility_evidence_url: string | null;
@@ -1141,6 +1142,7 @@ export default function DashboardPage() {
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [remoteType, setRemoteType] = useState("");
   const [employmentType, setEmploymentType] = useState("");
+  const [experienceLevel, setExperienceLevel] = useState("");
   const [eligibilityStatus, setEligibilityStatus] = useState("");
   const [listingStatus, setListingStatus] = useState("");
   const [sortBy, setSortBy] = useState<"newest" | "relevance">("newest");
@@ -1378,6 +1380,7 @@ export default function DashboardPage() {
 
         if (remoteType) params.set("remote_type", remoteType);
         if (employmentType) params.set("employment_type", employmentType);
+        if (experienceLevel) params.set("experience_level", experienceLevel);
         if (eligibilityStatus) {
           params.set("eligibility_status", eligibilityStatus);
         }
@@ -1416,6 +1419,7 @@ export default function DashboardPage() {
     jobsRefreshKey,
     remoteType,
     employmentType,
+    experienceLevel,
     eligibilityStatus,
     listingStatus,
     sortBy,
@@ -1572,7 +1576,7 @@ export default function DashboardPage() {
   const lastResult = Math.min(jobPage * PAGE_SIZE, jobTotal);
 
   const hasActiveFilters = Boolean(
-    remoteType || employmentType || eligibilityStatus || listingStatus || search || sortBy !== "newest",
+    remoteType || employmentType || experienceLevel || eligibilityStatus || listingStatus || search || sortBy !== "newest",
   );
 
   const stats = [
@@ -1951,6 +1955,7 @@ export default function DashboardPage() {
   function clearJobFilters() {
     setRemoteType("");
     setEmploymentType("");
+    setExperienceLevel("");
     setEligibilityStatus("");
     setListingStatus("");
     setSortBy("newest");
@@ -2396,7 +2401,7 @@ export default function DashboardPage() {
               {/* ============================ Find Jobs ============================ */}
               {activePage === "Find Jobs" && (
                 <section className="space-y-4">
-                  <div className="grid grid-cols-1 gap-3 rounded-2xl border border-slate-200 bg-white p-4 sm:grid-cols-2 xl:grid-cols-5">
+                  <div className="grid grid-cols-1 gap-3 rounded-2xl border border-slate-200 bg-white p-4 sm:grid-cols-2 xl:grid-cols-6">
                     <label className="space-y-1.5">
                       <span className="text-xs font-semibold text-slate-600">
                         Work arrangement
@@ -2433,6 +2438,29 @@ export default function DashboardPage() {
                         <option value="full-time">Full-time</option>
                         <option value="part-time">Part-time</option>
                         <option value="contract">Contract</option>
+                        <option value="internship">Internship</option>
+                        <option value="unknown">Unknown</option>
+                      </select>
+                    </label>
+
+                    <label className="space-y-1.5">
+                      <span className="text-xs font-semibold text-slate-600">
+                        Experience level
+                      </span>
+                      <select
+                        value={experienceLevel}
+                        onChange={(event) =>
+                          updateJobFilter(() =>
+                            setExperienceLevel(event.target.value),
+                          )
+                        }
+                        className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm"
+                      >
+                        <option value="">All experience levels</option>
+                        <option value="entry-level">Entry-level</option>
+                        <option value="junior">Junior</option>
+                        <option value="mid-level">Mid-level</option>
+                        <option value="senior">Senior</option>
                         <option value="internship">Internship</option>
                         <option value="unknown">Unknown</option>
                       </select>
@@ -2500,7 +2528,7 @@ export default function DashboardPage() {
                       <button
                         type="button"
                         onClick={clearJobFilters}
-                        className="text-left text-sm font-semibold text-violet-600 hover:text-violet-800 sm:col-span-2 xl:col-span-5"
+                        className="text-left text-sm font-semibold text-violet-600 hover:text-violet-800 sm:col-span-2 xl:col-span-6"
                       >
                         Clear all filters
                       </button>
