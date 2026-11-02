@@ -1,8 +1,20 @@
 "use client";
 
 import { useAuth } from "@clerk/nextjs";
-import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { FloppyDisk, UserCircle, ShieldCheck } from "@phosphor-icons/react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react";
+import {
+  CheckCircle,
+  FloppyDisk,
+  UserCircle,
+  ShieldCheck,
+} from "@phosphor-icons/react";
 
 type CandidateProfileData = {
   id?: number;
@@ -23,6 +35,12 @@ type CandidateProfileData = {
   created_at?: string;
   updated_at?: string;
 };
+
+/** Exactly what the PUT endpoint accepts (no id or timestamps). */
+type CandidateProfilePayload = Omit<
+  CandidateProfileData,
+  "id" | "created_at" | "updated_at"
+>;
 
 type JsonField =
   | "experience"
@@ -88,6 +106,31 @@ const jsonFieldLabels: { key: JsonField; label: string; description: string }[] 
   },
 ];
 
+/* -------------------------------------------------------------------------- */
+/*  API helpers                                                               */
+/* -------------------------------------------------------------------------- */
+
+/** Turns FastAPI/Pydantic errors (string or array) into a readable message. */
+function formatApiError(data: unknown, status: number): string {
+  const detail = (data as { detail?: unknown } | null)?.detail;
+
+  if (typeof detail === "string") return detail;
+
+  if (Array.isArray(detail)) {
+    const messages = detail.map((item) => {
+      const { loc, msg } = (item ?? {}) as { loc?: unknown[]; msg?: unknown };
+      const field = Array.isArray(loc)
+        ? loc.filter((part) => part !== "body").join(" → ")
+        : "";
+      const text = typeof msg === "string" ? msg : "Invalid value";
+      return field ? `${field}: ${text}` : text;
+    });
+    if (messages.length > 0) return messages.join("; ");
+  }
+
+  return `Request failed (${status}).`;
+}
+
 async function apiRequest<T>(
   path: string,
   token: string,
@@ -111,15 +154,15 @@ async function apiRequest<T>(
   const data = await response.json().catch(() => null);
 
   if (!response.ok) {
-    throw new Error(
-      data && typeof data.detail === "string"
-        ? data.detail
-        : `Request failed (${response.status}).`,
-    );
+    throw new Error(formatApiError(data, response.status));
   }
 
   return data as T;
 }
+
+/* -------------------------------------------------------------------------- */
+/*  Value helpers (the API can return null or JSON text for any field)        */
+/* -------------------------------------------------------------------------- */
 
 function parseStringList(value: string): string[] {
   return value
@@ -128,16 +171,88 @@ function parseStringList(value: string): string[] {
     .filter(Boolean);
 }
 
+function parseMaybeJson(value: unknown): unknown {
+  if (typeof value === "string") {
+    try {
+      return JSON.parse(value);
+    } catch {
+      return value;
+    }
+  }
+  return value;
+}
+
+function asString(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function asStringList(value: unknown): string[] {
+  const parsed = parseMaybeJson(value);
+  if (Array.isArray(parsed)) {
+    return parsed.filter((item): item is string => typeof item === "string");
+  }
+  return typeof parsed === "string" ? parseStringList(parsed) : [];
+}
+
+function asObjectList(value: unknown): Record<string, unknown>[] {
+  const parsed = parseMaybeJson(value);
+  return Array.isArray(parsed)
+    ? (parsed.filter(
+        (item) => item && typeof item === "object" && !Array.isArray(item),
+      ) as Record<string, unknown>[])
+    : [];
+}
+
+function asObject(value: unknown): Record<string, unknown> {
+  const parsed = parseMaybeJson(value);
+  return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+    ? (parsed as Record<string, unknown>)
+    : {};
+}
+
+/** Guarantees every field has a usable value, whatever the API returned. */
+function normalizeProfile(data: unknown): CandidateProfileData {
+  const d = (data && typeof data === "object" ? data : {}) as Record<
+    string,
+    unknown
+  >;
+
+  return {
+    id: typeof d.id === "number" ? d.id : undefined,
+    full_name: asString(d.full_name),
+    headline: asString(d.headline),
+    email: asString(d.email),
+    phone: asString(d.phone),
+    location: asString(d.location),
+    professional_summary: asString(d.professional_summary),
+    skills: asStringList(d.skills),
+    experience: asObjectList(d.experience),
+    education: asObjectList(d.education),
+    projects: asObjectList(d.projects),
+    certifications: asObjectList(d.certifications),
+    links: Object.fromEntries(
+      Object.entries(asObject(d.links)).filter(
+        ([, link]) => typeof link === "string",
+      ),
+    ) as Record<string, string>,
+    target_roles: asStringList(d.target_roles),
+    work_preferences: asObject(d.work_preferences),
+    created_at: asString(d.created_at) || undefined,
+    updated_at: asString(d.updated_at) || undefined,
+  };
+}
+
 function parseJsonField(
   key: JsonField,
   value: string,
 ): Record<string, unknown>[] | Record<string, string> | Record<string, unknown> {
+  const label = key.replaceAll("_", " ");
   let parsed: unknown;
 
   try {
     parsed = JSON.parse(value);
   } catch {
-    throw new Error(`${key.replaceAll("_", " ")} must contain valid JSON.`);
+    throw new Error(`${label} must contain valid JSON.`);
   }
 
   if (key === "links" || key === "work_preferences") {
@@ -146,7 +261,7 @@ function parseJsonField(
       Array.isArray(parsed) ||
       typeof parsed !== "object"
     ) {
-      throw new Error(`${key.replaceAll("_", " ")} must be a JSON object.`);
+      throw new Error(`${label} must be a JSON object.`);
     }
     return parsed as Record<string, string> | Record<string, unknown>;
   }
@@ -158,11 +273,40 @@ function parseJsonField(
         item === null || Array.isArray(item) || typeof item !== "object",
     )
   ) {
-    throw new Error(`${key.replaceAll("_", " ")} must be a JSON array of objects.`);
+    throw new Error(`${label} must be a JSON array of objects.`);
   }
 
   return parsed as Record<string, unknown>[];
 }
+
+/** Stable string of everything the user can edit, used to detect changes. */
+function serializeForm(
+  profile: CandidateProfileData,
+  listValues: { skills: string; target_roles: string },
+  jsonValues: Record<JsonField, string>,
+): string {
+  return JSON.stringify({
+    full_name: profile.full_name,
+    headline: profile.headline,
+    email: profile.email,
+    phone: profile.phone,
+    location: profile.location,
+    professional_summary: profile.professional_summary,
+    skills: listValues.skills,
+    target_roles: listValues.target_roles,
+    json: jsonValues,
+  });
+}
+
+function formatSavedTime(iso: string | null): string {
+  if (!iso) return "";
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? "" : date.toLocaleString();
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Component                                                                 */
+/* -------------------------------------------------------------------------- */
 
 export default function CandidateProfile() {
   const { isLoaded, isSignedIn, getToken } = useAuth();
@@ -185,6 +329,36 @@ export default function CandidateProfile() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [savedSnapshot, setSavedSnapshot] = useState<string | null>(null);
+  const [lastSaved, setLastSaved] = useState<string | null>(null);
+
+  const messageRef = useRef<HTMLDivElement>(null);
+
+  /** Puts a normalized profile into the form state and marks it as saved. */
+  const applyProfile = useCallback((data: unknown, justSaved = false) => {
+    const normalized = normalizeProfile(data);
+
+    const nextList = {
+      skills: normalized.skills.join(", "),
+      target_roles: normalized.target_roles.join(", "),
+    };
+    const nextJson: Record<JsonField, string> = {
+      experience: JSON.stringify(normalized.experience, null, 2),
+      education: JSON.stringify(normalized.education, null, 2),
+      projects: JSON.stringify(normalized.projects, null, 2),
+      certifications: JSON.stringify(normalized.certifications, null, 2),
+      links: JSON.stringify(normalized.links, null, 2),
+      work_preferences: JSON.stringify(normalized.work_preferences, null, 2),
+    };
+
+    setProfile(normalized);
+    setListValues(nextList);
+    setJsonValues(nextJson);
+    setSavedSnapshot(serializeForm(normalized, nextList, nextJson));
+    setLastSaved(
+      normalized.updated_at ?? (justSaved ? new Date().toISOString() : null),
+    );
+  }, []);
 
   const loadProfile = useCallback(async () => {
     if (!isLoaded || !isSignedIn) return;
@@ -202,25 +376,7 @@ export default function CandidateProfile() {
         token,
       );
 
-      const loaded = data ?? emptyProfile;
-
-      setProfile({ ...emptyProfile, ...loaded });
-      setListValues({
-        skills: (loaded.skills ?? []).join(", "),
-        target_roles: (loaded.target_roles ?? []).join(", "),
-      });
-      setJsonValues({
-        experience: JSON.stringify(loaded.experience ?? [], null, 2),
-        education: JSON.stringify(loaded.education ?? [], null, 2),
-        projects: JSON.stringify(loaded.projects ?? [], null, 2),
-        certifications: JSON.stringify(loaded.certifications ?? [], null, 2),
-        links: JSON.stringify(loaded.links ?? {}, null, 2),
-        work_preferences: JSON.stringify(
-          loaded.work_preferences ?? {},
-          null,
-          2,
-        ),
-      });
+      applyProfile(data);
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Could not load your profile.",
@@ -228,7 +384,7 @@ export default function CandidateProfile() {
     } finally {
       setLoading(false);
     }
-  }, [getToken, isLoaded, isSignedIn]);
+  }, [getToken, isLoaded, isSignedIn, applyProfile]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -237,6 +393,41 @@ export default function CandidateProfile() {
 
     return () => window.clearTimeout(timer);
   }, [loadProfile]);
+
+  // The Save button sits at the bottom of a long form, so bring the result
+  // message into view whenever one appears.
+  useEffect(() => {
+    if (error || notice) {
+      messageRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+    }
+  }, [error, notice]);
+
+  const currentSnapshot = useMemo(
+    () => serializeForm(profile, listValues, jsonValues),
+    [profile, listValues, jsonValues],
+  );
+  const dirty = savedSnapshot !== null && currentSnapshot !== savedSnapshot;
+  const hasSavedProfile = profile.id !== undefined;
+
+  // Once the user edits again, the old "saved" message no longer applies.
+  useEffect(() => {
+    if (dirty) setNotice("");
+  }, [dirty]);
+
+  // Warn before leaving the page with unsaved edits.
+  useEffect(() => {
+    if (!dirty) return;
+
+    function warn(event: BeforeUnloadEvent) {
+      event.preventDefault();
+    }
+
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
 
   function updateText(
     field: keyof Pick<
@@ -255,10 +446,18 @@ export default function CandidateProfile() {
 
   async function handleSave(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (saving) return;
+
     setError("");
     setNotice("");
 
-    let structuredFields: Partial<CandidateProfileData>;
+    const email = profile.email.trim();
+    if (email && !/^\S+@\S+\.\S+$/.test(email)) {
+      setError("Enter a valid email address, or leave it empty.");
+      return;
+    }
+
+    let structuredFields: Pick<CandidateProfilePayload, JsonField>;
 
     try {
       structuredFields = {
@@ -276,11 +475,17 @@ export default function CandidateProfile() {
       return;
     }
 
-    const payload: CandidateProfileData = {
-      ...profile,
-      ...structuredFields,
+    // Send only the fields the API accepts: no id, no timestamps, no nulls.
+    const payload: CandidateProfilePayload = {
+      full_name: profile.full_name.trim(),
+      headline: profile.headline.trim(),
+      email,
+      phone: profile.phone.trim(),
+      location: profile.location.trim(),
+      professional_summary: profile.professional_summary.trim(),
       skills: parseStringList(listValues.skills),
       target_roles: parseStringList(listValues.target_roles),
+      ...structuredFields,
     };
 
     setSaving(true);
@@ -300,23 +505,7 @@ export default function CandidateProfile() {
         },
       );
 
-      setProfile({ ...emptyProfile, ...saved });
-      setListValues({
-        skills: (saved.skills ?? []).join(", "),
-        target_roles: (saved.target_roles ?? []).join(", "),
-      });
-      setJsonValues({
-        experience: JSON.stringify(saved.experience ?? [], null, 2),
-        education: JSON.stringify(saved.education ?? [], null, 2),
-        projects: JSON.stringify(saved.projects ?? [], null, 2),
-        certifications: JSON.stringify(saved.certifications ?? [], null, 2),
-        links: JSON.stringify(saved.links ?? {}, null, 2),
-        work_preferences: JSON.stringify(
-          saved.work_preferences ?? {},
-          null,
-          2,
-        ),
-      });
+      applyProfile(saved, true);
       setNotice("Your candidate profile has been saved.");
     } catch (err) {
       setError(
@@ -373,25 +562,27 @@ export default function CandidateProfile() {
         </div>
       </section>
 
-      {error && (
-        <p
-          role="alert"
-          className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
-        >
-          {error}
-        </p>
-      )}
+      <div ref={messageRef} className="scroll-mt-28 space-y-3">
+        {error && (
+          <p
+            role="alert"
+            className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
+          >
+            {error}
+          </p>
+        )}
 
-      {notice && (
-        <p
-          role="status"
-          className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700"
-        >
-          {notice}
-        </p>
-      )}
+        {notice && (
+          <p
+            role="status"
+            className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700"
+          >
+            {notice}
+          </p>
+        )}
+      </div>
 
-      <form onSubmit={handleSave} className="space-y-6">
+      <form onSubmit={handleSave} noValidate className="space-y-6">
         <section className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6">
           <div className="mb-5 flex items-center gap-3">
             <UserCircle size={25} className="text-violet-600" />
@@ -531,18 +722,67 @@ export default function CandidateProfile() {
           </div>
         </section>
 
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <p className="text-xs text-slate-500">
-            Save your changes when you are ready. All profile sections are
-            saved together.
+        <div className="sticky bottom-[calc(4.5rem+env(safe-area-inset-bottom))] z-10 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white/95 p-3 shadow-lg backdrop-blur sm:p-4 lg:bottom-4">
+          <p
+            role="status"
+            aria-live="polite"
+            className="flex items-center gap-2 text-xs sm:text-sm"
+          >
+            {saving ? (
+              <span className="text-slate-500">Saving your profile…</span>
+            ) : dirty ? (
+              <>
+                <span className="h-2 w-2 shrink-0 rounded-full bg-amber-500" />
+                <span className="font-semibold text-amber-700">
+                  Unsaved changes
+                </span>
+              </>
+            ) : hasSavedProfile ? (
+              <>
+                <CheckCircle
+                  size={18}
+                  weight="fill"
+                  className="shrink-0 text-emerald-500"
+                />
+                <span className="text-slate-600">
+                  <span className="font-semibold text-emerald-700">
+                    All changes saved
+                  </span>
+                  {formatSavedTime(lastSaved) && (
+                    <span className="text-slate-400">
+                      {" "}
+                      · {formatSavedTime(lastSaved)}
+                    </span>
+                  )}
+                </span>
+              </>
+            ) : (
+              <span className="text-slate-500">
+                Save your changes when you are ready. All profile sections are
+                saved together.
+              </span>
+            )}
           </p>
+
           <button
             type="submit"
-            disabled={saving}
-            className="inline-flex items-center justify-center gap-2 rounded-xl bg-violet-600 px-5 py-3 text-sm font-bold text-white transition hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-60"
+            disabled={saving || (!dirty && hasSavedProfile)}
+            className={`inline-flex items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-bold transition disabled:cursor-not-allowed ${
+              !dirty && hasSavedProfile && !saving
+                ? "bg-emerald-50 text-emerald-700"
+                : "bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-60"
+            }`}
           >
-            <FloppyDisk size={18} />
-            {saving ? "Saving profile…" : "Save profile"}
+            {!dirty && hasSavedProfile && !saving ? (
+              <CheckCircle size={18} weight="fill" />
+            ) : (
+              <FloppyDisk size={18} />
+            )}
+            {saving
+              ? "Saving profile…"
+              : !dirty && hasSavedProfile
+                ? "Saved"
+                : "Save profile"}
           </button>
         </div>
       </form>
