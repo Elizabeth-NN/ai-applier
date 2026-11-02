@@ -319,6 +319,12 @@ const parsedFieldLabels: [string, string][] = [
   ["github_url", "GitHub"],
   ["summary", "Summary"],
   ["skills", "Skills"],
+  ["target_roles", "Target roles"],
+  ["experience", "Work experience"],
+  ["education", "Education"],
+  ["projects", "Projects"],
+  ["certifications", "Certifications"],
+  ["links", "Links"],
 ];
 
 async function apiRequest<T>(
@@ -378,6 +384,27 @@ function toJob(job: ApiJob, application: ApiApplication | undefined): Job {
   };
 }
 
+
+function formatParsedValue(value: unknown): string {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) =>
+        typeof item === "object" && item !== null
+          ? Object.values(item as Record<string, unknown>)
+              .filter((v) => typeof v === "string" && v)
+              .slice(0, 3)
+              .join(" · ")
+          : String(item),
+      )
+      .join("\n");
+  }
+  if (typeof value === "object" && value !== null) {
+    return Object.entries(value as Record<string, unknown>)
+      .map(([k, v]) => `${k}: ${v}`)
+      .join("\n");
+  }
+  return String(value ?? "");
+}
 /* -------------------------------------------------------------------------- */
 /*  Small shared components                                                   */
 /* -------------------------------------------------------------------------- */
@@ -2003,19 +2030,36 @@ const [profileRefreshKey, setProfileRefreshKey] = useState(0);
       const token = await getToken();
       if (!token) throw new Error("Please sign in again.");
 
-      await apiRequest(
+      const result = await apiRequest<{
+        updated_fields: string[];
+        kept_fields: string[];
+        unmapped_fields: string[];
+      }>(
         `/api/candidate-profile/from-resume/${selectedResumeId}?overwrite=${overwriteProfile}`,
         token,
         { method: "POST" },
       );
 
-      // Remount the profile form so it loads the updated data.
       setProfileRefreshKey((current) => current + 1);
-      setProfileFillNotice(
-        overwriteProfile
-          ? "Profile updated from your resume."
-          : "Empty profile fields were filled from your resume. Existing details were kept.",
-      );
+
+      const humanize = (names: string[]) =>
+        names.map((name) => name.replace(/_/g, " ")).join(", ");
+
+      const parts: string[] = [];
+      if (result.updated_fields.length > 0) {
+        parts.push(`Filled: ${humanize(result.updated_fields)}.`);
+      } else {
+        parts.push("Nothing new to fill.");
+      }
+      if (result.kept_fields.length > 0) {
+        parts.push(`Kept your existing: ${humanize(result.kept_fields)}.`);
+      }
+      if (result.unmapped_fields.length > 0) {
+        parts.push(
+          `Found but not saved (no matching profile field): ${humanize(result.unmapped_fields)}.`,
+        );
+      }
+      setProfileFillNotice(parts.join(" "));
     } catch (err) {
       setProfileFillError(
         err instanceof Error
@@ -3095,9 +3139,7 @@ const [profileRefreshKey, setProfileRefreshKey] = useState(0);
                                   <dt className="text-xs font-semibold text-slate-500">
                                     {label}
                                   </dt>
-                                  <dd className="mt-0.5 break-words text-sm text-slate-800">
-                                    {Array.isArray(value) ? value.join(", ") : value}
-                                  </dd>
+                                  <dd className="mt-0.5 whitespace-pre-line break-words text-sm text-slate-800">{formatParsedValue(value)}</dd>
                                 </div>
                               );
                             })}

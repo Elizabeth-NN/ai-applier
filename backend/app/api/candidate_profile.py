@@ -1,5 +1,8 @@
+import json
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import ARRAY, JSON, select
+from pydantic import BaseModel
+from sqlalchemy import ARRAY, JSON, String, Text, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -23,21 +26,39 @@ router = APIRouter(
 )
 
 # Parsed key -> possible column names on the CandidateProfile model.
-# The first alias that exists as a real column is used; the rest are ignored,
-# so this works even if your model only has a subset of these fields.
+# The first alias that exists as a real column is used.
 FIELD_ALIASES: dict[str, list[str]] = {
     "full_name": ["full_name", "name"],
     "first_name": ["first_name"],
     "last_name": ["last_name"],
-    "email": ["email", "contact_email"],
-    "phone": ["phone", "phone_number"],
+    "email": ["email", "contact_email", "email_address"],
+    "phone": ["phone", "phone_number", "phone_no"],
     "location": ["location", "city"],
+    "headline": ["headline", "professional_headline", "title", "current_title"],
+    "summary": ["summary", "professional_summary", "bio", "about"],
+    "skills": ["skills"],
+    "target_roles": ["target_roles", "target_job_roles", "desired_roles", "target_titles"],
+    "experience": ["work_experience", "experience", "work_history", "experiences"],
+    "education": ["education", "educations"],
+    "projects": ["projects"],
+    "certifications": ["certifications", "certificates"],
+    "links": ["professional_links", "links", "social_links", "urls"],
     "linkedin_url": ["linkedin_url", "linkedin"],
     "github_url": ["github_url", "github"],
-    "headline": ["headline", "title", "current_title"],
-    "summary": ["summary", "bio", "about"],
-    "skills": ["skills"],
 }
+
+# JSON columns that hold an object rather than a list.
+DICT_COLUMNS = {"professional_links", "links", "social_links", "urls", "work_preferences", "preferences"}
+
+# Keys that are redundant when another field already carries the information.
+REDUNDANT_WHEN_UNMAPPED = {"first_name", "last_name"}
+
+
+class ResumeFillResult(BaseModel):
+    profile: CandidateProfileRead
+    updated_fields: list[str]
+    kept_fields: list[str]
+    unmapped_fields: list[str]
 
 
 def _get_profile(user_id: str, db: Session) -> CandidateProfile | None:
@@ -49,40 +70,119 @@ def _get_profile(user_id: str, db: Session) -> CandidateProfile | None:
 
 
 def _is_empty(value) -> bool:
-    return value is None or value == "" or value == [] or value == {}
+    if value is None:
+        return True
+    if isinstance(value, str):
+        stripped = value.strip()
+        return stripped in ("", "[]", "{}", "null")
+    return value == [] or value == {}
+
+
+def _column_for(key: str, columns) -> str | None:
+    for alias in FIELD_ALIASES.get(key, []):
+        if alias in columns:
+            col = columns[alias]
+            if not col.primary_key and not col.foreign_keys:
+                return alias
+    return None
+
+
+def _coerce(value, column):
+    """Convert a parsed value into what the column can store."""
+    is_json = isinstance(column.type, (JSON, ARRAY))
+    if is_json:
+        return value
+    # Text-like column.
+    if isinstance(value, list) and all(isinstance(v, str) for v in value):
+        return ", ".join(value)
+    if isinstance(value, (list, dict)):
+        return json.dumps(value, indent=2, ensure_ascii=False)
+    return value
+
+
+def _existing_as_python(raw):
+    """Read the current column value as a Python object if it is JSON text."""
+    if isinstance(raw, str):
+        try:
+            return json.loads(raw)
+        except ValueError:
+            return raw
+    return raw
+
+
+def _fill_null_defaults(profile: CandidateProfile) -> None:
+    """Replace NULL text/JSON columns with empty values.
+
+    The profile form binds these straight into controlled inputs, which
+    cannot accept null. Only columns that are currently None are touched.
+    """
+    for column in CandidateProfile.__table__.columns:
+        if column.primary_key or column.foreign_keys:
+            continue
+        if getattr(profile, column.name, None) is not None:
+            continue
+        if column.default is not None or column.server_default is not None:
+            continue
+        if isinstance(column.type, (String, Text)):
+            setattr(profile, column.name, "")
+        elif isinstance(column.type, (JSON, ARRAY)):
+            setattr(profile, column.name, {} if column.name in DICT_COLUMNS else [])
 
 
 def _apply_parsed_fields(
     profile: CandidateProfile,
     parsed: dict,
     overwrite: bool,
-) -> list[str]:
-    """Copy parsed values onto the profile. Returns the columns that changed."""
+) -> tuple[list[str], list[str], list[str]]:
+    """Returns (updated columns, kept columns, parsed keys with no column)."""
     columns = CandidateProfile.__table__.columns
     updated: list[str] = []
+    kept: list[str] = []
+    unmapped: list[str] = []
+    has_links_column = _column_for("links", columns) is not None
 
     for key, value in parsed.items():
-        column_name = next(
-            (alias for alias in FIELD_ALIASES.get(key, []) if alias in columns),
-            None,
-        )
+        column_name = _column_for(key, columns)
+
         if column_name is None:
+            redundant = key in REDUNDANT_WHEN_UNMAPPED or (
+                key in {"linkedin_url", "github_url"} and has_links_column
+            )
+            if not redundant:
+                unmapped.append(key)
+            continue
+
+        # linkedin/github are also covered by the links column; skip duplicates
+        # when the links dict already supplied them.
+        if key in {"linkedin_url", "github_url"} and has_links_column:
             continue
 
         column = columns[column_name]
-        if column.primary_key or column.foreign_keys:
+        current = getattr(profile, column_name, None)
+
+        # Dict columns (professional links) merge key by key.
+        if isinstance(value, dict):
+            existing = _existing_as_python(current)
+            existing = existing if isinstance(existing, dict) else {}
+            merged = (
+                {**existing, **value} if overwrite else {**value, **existing}
+            )
+            merged = {k: v for k, v in merged.items() if not _is_empty(v)}
+            if merged == existing:
+                kept.append(column_name)
+                continue
+            setattr(profile, column_name, _coerce(merged, column))
+            updated.append(column_name)
             continue
 
-        if isinstance(value, list) and not isinstance(column.type, (JSON, ARRAY)):
-            value = ", ".join(value)
-
-        if not overwrite and not _is_empty(getattr(profile, column_name, None)):
+        if not overwrite and not _is_empty(current):
+            kept.append(column_name)
             continue
 
-        setattr(profile, column_name, value)
+        setattr(profile, column_name, _coerce(value, column))
         updated.append(column_name)
 
-    return updated
+    return updated, kept, unmapped
 
 
 @router.get("", response_model=CandidateProfileRead | None)
@@ -127,7 +227,7 @@ def upsert_candidate_profile(
 
 @router.post(
     "/from-resume/{resume_id}",
-    response_model=CandidateProfileRead,
+    response_model=ResumeFillResult,
     status_code=status.HTTP_200_OK,
 )
 def fill_candidate_profile_from_resume(
@@ -154,7 +254,19 @@ def fill_candidate_profile_from_resume(
         profile = CandidateProfile(user_id=user_id)
         db.add(profile)
 
-    _apply_parsed_fields(profile, parsed, overwrite)
+    updated, kept, unmapped = _apply_parsed_fields(profile, parsed, overwrite)
+    _fill_null_defaults(profile)
+
+    if not updated and not kept:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                "None of the details found in the resume match columns on the "
+                f"profile model ({', '.join(sorted(parsed))}). "
+                "Update FIELD_ALIASES in candidate_profile.py."
+            ),
+        )
 
     try:
         db.commit()
@@ -164,10 +276,14 @@ def fill_candidate_profile_from_resume(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=(
                 "The resume did not contain all required profile fields. "
-                "Create the profile with PUT /api/candidate-profile first, "
-                "then run this again."
+                "Save the profile once with the form, then run this again."
             ),
         ) from exc
 
     db.refresh(profile)
-    return profile
+    return ResumeFillResult(
+        profile=CandidateProfileRead.model_validate(profile, from_attributes=True),
+        updated_fields=updated,
+        kept_fields=kept,
+        unmapped_fields=unmapped,
+    )

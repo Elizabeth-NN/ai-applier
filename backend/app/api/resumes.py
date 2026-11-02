@@ -191,27 +191,76 @@ LINKEDIN_RE = re.compile(
     re.I,
 )
 GITHUB_RE = re.compile(r"(?:https?://)?(?:www\.)?github\.com/[A-Za-z0-9-]+/?", re.I)
+URL_RE = re.compile(r"(?:https?://|www\.)[^\s)>\],;]+", re.I)
 LOCATION_RE = re.compile(
     r"\b([A-Z][A-Za-z.'-]+(?: [A-Z][A-Za-z.'-]+){0,2},\s*"
     r"(?:[A-Z]{2}|[A-Z][A-Za-z.'-]+(?: [A-Z][A-Za-z.'-]+){0,2}))\b"
 )
+LOCATION_ONLY_RE = re.compile(
+    r"[A-Z][A-Za-z.'-]+(?: [A-Z][A-Za-z.'-]+){0,2},\s*"
+    r"[A-Z][A-Za-z.'-]+(?: [A-Z][A-Za-z.'-]+){0,2}"
+)
 
 SECTION_HEADINGS = {
     "summary": {"summary", "professional summary", "profile", "professional profile",
-                "objective", "career objective", "about", "about me"},
+                "objective", "career objective", "about", "about me", "personal statement",
+                "career summary"},
     "skills": {"skills", "technical skills", "core competencies", "key skills",
-               "skills & tools", "skills and tools", "technologies", "competencies"},
-    "other": {"experience", "work experience", "professional experience",
-              "employment history", "education", "projects", "certifications",
-              "certificates", "awards", "languages", "interests", "references",
-              "publications", "volunteer experience", "work history", "achievements"},
+               "skills and tools", "technologies", "competencies", "skills and competencies",
+               "areas of expertise", "tech stack"},
+    "experience": {"experience", "work experience", "professional experience",
+                   "employment history", "work history", "career history",
+                   "relevant experience", "internships", "internship experience",
+                   "employment", "professional background"},
+    "education": {"education", "academic background", "education and training",
+                  "academic qualifications", "qualifications", "education and qualifications"},
+    "projects": {"projects", "personal projects", "selected projects", "key projects",
+                 "academic projects", "technical projects"},
+    "certifications": {"certifications", "certificates", "licenses and certifications",
+                       "courses", "training", "certifications and training",
+                       "professional certifications", "courses and certifications",
+                       "training and certifications"},
+    "other": {"awards", "languages", "interests", "references", "publications",
+              "volunteer experience", "achievements", "hobbies", "referees",
+              "extracurricular activities", "leadership"},
 }
 ALL_HEADINGS = set().union(*SECTION_HEADINGS.values())
+
+MONTHS = {m: i for i, m in enumerate(
+    ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"], 1)}
+_MONTH = r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?,?\s+\d{4}"
+_DATE_TOKEN = rf"(?:{_MONTH}|\d{{1,2}}/\d{{4}}|\d{{4}})"
+DATE_RANGE_RE = re.compile(
+    rf"(?P<start>{_DATE_TOKEN})\s*(?:-|–|—|to|until)\s*"
+    rf"(?P<end>{_DATE_TOKEN}|present|current|now|ongoing|date)\b",
+    re.I,
+)
+YEAR_RE = re.compile(r"\b(?:19|20)\d{2}\b")
+BULLET_RE = re.compile(r"^\s*[•·▪●■◦○►➢✓*\-–—>]+\s*")
+
+TITLE_RE = re.compile(
+    r"engineer|developer|manager|analyst|intern|officer|assistant|lead|director|designer|"
+    r"consultant|specialist|administrator|coordinator|associate|architect|scientist|"
+    r"technician|accountant|executive|representative|supervisor|teacher|tutor|volunteer|"
+    r"attendant|clerk|programmer|trainee|attach[eé]|head|president|founder|owner|"
+    r"researcher|lecturer|instructor|writer|editor|agent|advisor|adviser",
+    re.I,
+)
+COMPANY_RE = re.compile(
+    r"\b(?:ltd|limited|inc|llc|corp|corporation|company|co\.|group|bank|technologies|"
+    r"solutions|systems|hospital|agency|foundation|services|labs|studio|ngo|plc|"
+    r"enterprises|holdings|university|college|school|institute|ministry|authority)\b",
+    re.I,
+)
+INSTITUTION_RE = re.compile(
+    r"universit|college|school|institute|academy|polytechnic|campus", re.I
+)
 
 
 def _heading_of(line: str) -> str | None:
     cleaned = re.sub(r"[:\-–—_=*#\s]+$", "", line.strip()).strip().lower()
-    if len(cleaned) > 40 or cleaned not in ALL_HEADINGS:
+    cleaned = re.sub(r"\s*&\s*", " and ", cleaned)
+    if len(cleaned) > 45 or cleaned not in ALL_HEADINGS:
         return None
     for key, names in SECTION_HEADINGS.items():
         if cleaned in names:
@@ -245,11 +294,19 @@ def _looks_like_name(line: str) -> bool:
     return all(re.fullmatch(r"[A-Za-z][A-Za-z.'’-]*", w) for w in words)
 
 
+def _is_bullet(line: str) -> bool:
+    return bool(BULLET_RE.match(line)) and len(line.strip()) > 1
+
+
+def _strip_bullet(line: str) -> str:
+    return BULLET_RE.sub("", line).strip()
+
+
 def _parse_skills(lines: list[str]) -> list[str]:
     skills: list[str] = []
     seen: set[str] = set()
     for line in lines:
-        line = re.sub(r"^[\s•·▪●■\-*–]+", "", line)
+        line = _strip_bullet(line)
         if ":" in line:  # "Languages: Python, Go"
             line = line.split(":", 1)[1]
         for part in re.split(r"[,;|•·▪●/]|\s{2,}", line):
@@ -258,6 +315,247 @@ def _parse_skills(lines: list[str]) -> list[str]:
                 seen.add(skill.lower())
                 skills.append(skill)
     return skills[:50]
+
+
+# ----- dates / entries ------------------------------------------------------
+def _norm_date(token: str | None) -> str | None:
+    if not token:
+        return None
+    t = token.strip().lower().strip(".,")
+    if t in {"present", "current", "now", "ongoing", "date"}:
+        return "Present"
+    if m := re.match(r"([a-z]{3})[a-z]*\.?,?\s+(\d{4})", t):
+        month = MONTHS.get(m.group(1))
+        return f"{m.group(2)}-{month:02d}" if month else m.group(2)
+    if m := re.match(r"(\d{1,2})/(\d{4})", t):
+        return f"{m.group(2)}-{int(m.group(1)):02d}"
+    return t
+
+
+def _split_header(text: str) -> list[str]:
+    text = re.sub(r"[()\[\]]", " ", text)
+    parts = re.split(r"\s*\|\s*|\s+[-–—]\s+|\s+at\s+|\s+@\s+", text)
+    parts = [p.strip(" ,;:-–—•·") for p in parts]
+    parts = [p for p in parts if p]
+    if len(parts) == 1 and "," in parts[0]:
+        pieces = [p.strip() for p in parts[0].split(",", 1)]
+        looks_like_location = LOCATION_ONLY_RE.fullmatch(parts[0]) and not (
+            TITLE_RE.search(parts[0]) or COMPANY_RE.search(parts[0])
+        )
+        if all(pieces) and not looks_like_location:
+            parts = pieces
+    return parts
+
+
+def _merge_wrapped(lines: list[str]) -> list[str]:
+    """Join bullets with the continuation lines PDFs wrap them onto."""
+    items: list[str] = []
+    for line in lines:
+        text = _strip_bullet(line)
+        if not text:
+            continue
+        if _is_bullet(line) or not items:
+            items.append(text)
+        else:
+            items[-1] = f"{items[-1]} {text}"
+    return items
+
+
+def _header_like(line: str) -> bool:
+    return (
+        not _is_bullet(line)
+        and len(line) <= 80
+        and len(line.split()) <= 10
+        and (line[0].isupper() or line[0].isdigit())
+        and not line.endswith((".", ",", ";"))
+    )
+
+
+def _collect_entries(lines: list[str], allow_single_year: bool = False) -> list[dict]:
+    anchors = [
+        i
+        for i, line in enumerate(lines)
+        if not _is_bullet(line)
+        and len(line) <= 140
+        and (
+            DATE_RANGE_RE.search(line)
+            or (allow_single_year and len(line) <= 100 and YEAR_RE.search(line))
+        )
+    ]
+
+    info = []
+    for n, i in enumerate(anchors):
+        line = lines[i]
+        m = DATE_RANGE_RE.search(line)
+        if m:
+            start, end = _norm_date(m.group("start")), _norm_date(m.group("end"))
+            rest = f"{line[: m.start()]} {line[m.end():]}"
+        else:
+            ym = YEAR_RE.search(line)
+            start, end = None, ym.group(0)  # type: ignore[union-attr]
+            rest = f"{line[: ym.start()]} {line[ym.end():]}"  # type: ignore[union-attr]
+
+        parts = _split_header(rest)
+        back: list[str] = []
+        if len(parts) < 2:
+            prev_anchor = anchors[n - 1] if n else -1
+            j = i - 1
+            while j > prev_anchor and len(back) < 2 and _header_like(lines[j]):
+                back.insert(0, lines[j])
+                j -= 1
+        back_parts = [p for line_ in back for p in _split_header(line_)]
+        info.append(
+            {
+                "anchor": i,
+                "header_start": i - len(back),
+                "parts": back_parts + parts,
+                "start": start,
+                "end": end,
+            }
+        )
+
+    entries = []
+    for n, item in enumerate(info):
+        stop = info[n + 1]["header_start"] if n + 1 < len(info) else len(lines)
+        body = lines[item["anchor"] + 1 : stop]
+        entries.append(
+            {
+                "parts": item["parts"],
+                "start": item["start"],
+                "end": item["end"],
+                "description": "\n".join(_merge_wrapped(body))[:3000],
+            }
+        )
+    return entries
+
+
+def _classify_job(parts: list[str]) -> tuple[str | None, str | None]:
+    title = company = None
+    for p in parts:
+        if title is None and TITLE_RE.search(p):
+            title = p
+        elif company is None and COMPANY_RE.search(p):
+            company = p
+    rest = [
+        p for p in parts
+        if p not in (title, company) and not LOCATION_ONLY_RE.fullmatch(p)
+    ]
+    if title is None and rest:
+        title = rest.pop(0)
+    if company is None and rest:
+        company = rest.pop(0)
+    return title, company
+
+
+def _parse_experience(lines: list[str]) -> list[dict]:
+    out = []
+    for e in _collect_entries(lines):
+        title, company = _classify_job(e["parts"])
+        if not (title or company):
+            continue
+        item = {
+            "company": company,
+            "title": title,
+            "description": e["description"],
+            "start_date": e["start"],
+            "end_date": e["end"],
+        }
+        out.append({k: v for k, v in item.items() if v})
+    return out[:15]
+
+
+def _parse_education(lines: list[str]) -> list[dict]:
+    out = []
+    for e in _collect_entries(lines, allow_single_year=True):
+        parts = [p for p in e["parts"] if not LOCATION_ONLY_RE.fullmatch(p)]
+        if not parts:
+            continue
+        institution = next((p for p in parts if INSTITUTION_RE.search(p)), None)
+        rest = [p for p in parts if p != institution]
+        qualification = rest[0] if rest else None
+        if institution is None and len(parts) > 1:
+            institution, qualification = parts[1], parts[0]
+        item = {
+            "institution": institution or (parts[0] if not qualification else None),
+            "qualification": qualification,
+            "start_date": e["start"],
+            "end_date": e["end"],
+        }
+        item = {k: v for k, v in item.items() if v}
+        if item:
+            out.append(item)
+    return out[:10]
+
+
+def _parse_projects(lines: list[str]) -> list[dict]:
+    projects: list[dict] = []
+    cur: dict | None = None
+    last_bullet = False
+    for line in lines:
+        text = _strip_bullet(line)
+        if not text:
+            continue
+        bullet = _is_bullet(line)
+        is_title = (
+            not bullet
+            and _header_like(line)
+            and not URL_RE.search(text)
+            and (
+                cur is None
+                or last_bullet
+                or (cur["plain"] >= 1 and len(text.split()) <= 6)
+            )
+        )
+        if is_title:
+            parts = _split_header(text)
+            cur = {"name": parts[0] if parts else text, "desc": [], "text": text, "plain": 0}
+            if len(parts) > 1:
+                cur["desc"].append(" | ".join(parts[1:]))
+            projects.append(cur)
+        elif cur is not None:
+            if not bullet and text[0].islower() and cur["desc"]:
+                cur["desc"][-1] = f"{cur['desc'][-1]} {text}"  # wrapped line
+            else:
+                cur["desc"].append(text)
+                if not bullet:
+                    cur["plain"] += 1
+            cur["text"] += f" {text}"
+        last_bullet = bullet
+
+    out = []
+    for p in projects:
+        item = {"name": p["name"][:150], "description": "\n".join(p["desc"])[:2000]}
+        if m := URL_RE.search(p["text"]):
+            item["url"] = _with_scheme(m.group(0))
+        out.append({k: v for k, v in item.items() if v})
+    return out[:10]
+
+
+def _parse_certifications(lines: list[str]) -> list[dict]:
+    out = []
+    for line in lines:
+        text = _strip_bullet(line)
+        if not 4 <= len(text) <= 150:
+            continue
+        date = None
+        if ym := YEAR_RE.search(text):
+            date = ym.group(0)
+            text = f"{text[: ym.start()]} {text[ym.end():]}"
+        by = re.split(r"\s+by\s+", text, maxsplit=1, flags=re.I)
+        parts = _split_header(by[0])
+        name = parts[0] if parts else None
+        issuer = parts[1] if len(parts) > 1 else (by[1].strip(" ,.-") if len(by) > 1 else None)
+        if not name:
+            continue
+        item = {"name": name, "issuer": issuer, "date": date}
+        out.append({k: v for k, v in item.items() if v})
+    return out[:15]
+
+
+# ----- main entry point -----------------------------------------------------
+def _with_scheme(url: str) -> str:
+    url = url.rstrip("/.,")
+    return url if url.lower().startswith("http") else f"https://{url}"
 
 
 def parse_resume_fields(text: str) -> dict:
@@ -275,26 +573,43 @@ def parse_resume_fields(text: str) -> dict:
             result["phone"] = re.sub(r"\s+", " ", m.group(1)).strip()
             break
 
+    links: dict[str, str] = {}
     if m := LINKEDIN_RE.search(text):
-        url = m.group(0).rstrip("/")
-        result["linkedin_url"] = url if url.lower().startswith("http") else f"https://{url}"
-
+        result["linkedin_url"] = links["linkedin"] = _with_scheme(m.group(0))
     if m := GITHUB_RE.search(text):
-        url = m.group(0).rstrip("/")
-        result["github_url"] = url if url.lower().startswith("http") else f"https://{url}"
+        result["github_url"] = links["github"] = _with_scheme(m.group(0))
+    for m in URL_RE.finditer(text):
+        url = m.group(0)
+        if not re.search(r"linkedin\.com|github\.com|mailto:", url, re.I):
+            if "@" not in url:
+                links["portfolio"] = _with_scheme(url)
+                break
+    if "portfolio" not in links:
+        domain_re = re.compile(
+            r"(?<![\w@/.])((?:[\w-]+\.)+(?:dev|io|me|co\.ke|com|net|org|app|tech)(?:/[^\s|,;]*)?)",
+            re.I,
+        )
+        for line in header:
+            for m in domain_re.finditer(EMAIL_RE.sub(" ", line)):
+                if not re.search(r"linkedin|github", m.group(1), re.I):
+                    links["portfolio"] = _with_scheme(m.group(1))
+                    break
+            if "portfolio" in links:
+                break
+    if links:
+        result["links"] = links
 
     name_index = None
     for i, line in enumerate(header[:6]):
         if _looks_like_name(line):
-            result["full_name"] = " ".join(line.replace(",", " ").split()).title() \
-                if line.isupper() else " ".join(line.replace(",", " ").split())
+            full = " ".join(line.replace(",", " ").split())
+            result["full_name"] = full.title() if line.isupper() else full
             parts = result["full_name"].split()
             result["first_name"] = parts[0]
             result["last_name"] = " ".join(parts[1:])
             name_index = i
             break
 
-    # Headline: the line right after the name if it is not contact info.
     if name_index is not None and name_index + 1 < len(header):
         candidate = header[name_index + 1]
         if (
@@ -305,6 +620,7 @@ def parse_resume_fields(text: str) -> dict:
             and sum(ch.isdigit() for ch in candidate) == 0
         ):
             result["headline"] = candidate
+            result["target_roles"] = [candidate]
 
     for line in header:
         if EMAIL_RE.search(line) and "|" not in line and "," not in line:
@@ -320,6 +636,14 @@ def parse_resume_fields(text: str) -> dict:
         result["summary"] = summary[:2000]
     if skills := _parse_skills(sections.get("skills", [])):
         result["skills"] = skills
+    if experience := _parse_experience(sections.get("experience", [])):
+        result["experience"] = experience
+    if education := _parse_education(sections.get("education", [])):
+        result["education"] = education
+    if projects := _parse_projects(sections.get("projects", [])):
+        result["projects"] = projects
+    if certs := _parse_certifications(sections.get("certifications", [])):
+        result["certifications"] = certs
 
     return result
 
