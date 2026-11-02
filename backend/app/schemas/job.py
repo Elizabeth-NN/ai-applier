@@ -92,6 +92,10 @@ class ResumeJobMatchItem(JobRead):
     match_score: int = Field(ge=0, le=100)
     matched_terms: list[str]
     terms_not_found_in_resume: list[str]
+    required_terms_found: list[str]
+    required_terms_not_found: list[str]
+    preferred_terms_found: list[str]
+    preferred_terms_not_found: list[str]
     match_reasons: list[str]
 
 

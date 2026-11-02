@@ -149,6 +149,36 @@ def test_matches_return_explanations_and_preserve_eligibility(match_context):
     assert "storage_key" not in item
 
 
+
+def test_matches_separate_required_and_preferred_evidence(match_context):
+    resume_id = create_resume(match_context)
+    create_job(
+        match_context,
+        title="Python FastAPI Developer",
+        description=(
+            "Required qualifications:\n"
+            "- Python\n"
+            "- FastAPI\n"
+            "- Kubernetes\n\n"
+            "Preferred qualifications:\n"
+            "- Docker\n"
+            "- AWS\n"
+            "- Terraform"
+        ),
+    )
+
+    response = match_context["client"].get(
+        f"/api/jobs/matches?resume_id={resume_id}"
+    )
+
+    assert response.status_code == 200, response.text
+    item = response.json()["items"][0]
+
+    assert item["required_terms_found"] == ["fastapi", "python"]
+    assert item["required_terms_not_found"] == ["kubernetes"]
+    assert item["preferred_terms_found"] == ["docker"]
+    assert item["preferred_terms_not_found"] == ["aws", "terraform"]
+
 def test_user_cannot_match_against_another_users_resume(match_context):
     resume_id = create_resume(match_context)
     match_context["user"]["id"] = "different_user"

@@ -176,6 +176,14 @@ OPTIONAL_MARKER_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Positive wording that explicitly identifies a preferred qualification.
+# Kept separate from OPTIONAL_MARKER_RE so "not required" is not preferred.
+PREFERRED_MARKER_RE = re.compile(
+    r"\b(?:nice[\s-]to[\s-]have|preferred|desired|optional|bonus|"
+    r"a\s+plus|advantageous)\b",
+    re.IGNORECASE,
+)
+
 
 # --- Text cleaning ----------------------------------------------------------
 
@@ -361,40 +369,84 @@ def _is_section_header(line: str) -> bool:
     return looks_like_header and len(_raw_tokens(cleaned)) <= 8
 
 
-def _requirement_terms(text: str) -> set[str]:
-    """Extract informative terms from text explicitly marked as required.
+def _requirement_classifications(
+    text: str,
+) -> tuple[set[str], set[str]]:
+    """Extract explicitly required and preferred terms from job text.
 
-    Handles both inline markers ("Python is required") and section headers
-    ("Requirements:" followed by bullet lines). Optional wording such as
-    "preferred" or "not required" is never treated as a requirement.
+    Supports requirement/preference section headers, bullet lists, and inline
+    wording. Contrasting clauses are separated so a preferred term does not
+    cancel a required term elsewhere in the same sentence.
     """
     required: set[str] = set()
-    in_required_block = False
+    preferred: set[str] = set()
+    section: str | None = None
 
     for line in _clean_text(text).splitlines():
         stripped = line.strip()
 
         if not stripped:
-            in_required_block = False
+            section = None
             continue
 
         if _is_section_header(stripped):
-            in_required_block = bool(
+            if PREFERRED_MARKER_RE.search(stripped):
+                section = "preferred"
+            elif (
                 HEADER_REQUIREMENT_RE.search(stripped)
                 and not OPTIONAL_MARKER_RE.search(stripped)
-            )
+            ):
+                section = "required"
+            else:
+                section = None
             continue
 
-        if in_required_block:
+        if section == "required":
             required.update(_tokens(stripped))
             continue
 
-        for sentence in SENTENCE_RE.split(stripped):
-            if REQUIREMENT_MARKER_RE.search(sentence) and not OPTIONAL_MARKER_RE.search(
-                sentence
-            ):
-                required.update(_tokens(sentence))
+        if section == "preferred":
+            preferred.update(_tokens(stripped))
+            continue
 
+        for sentence in SENTENCE_RE.split(stripped):
+            # Keep comma-separated skill lists together, but separate
+            # contrasting clauses such as "Python is required, while
+            # Docker is preferred."
+            clauses = re.split(
+                r",?\s+(?=(?:while|whereas|but)\b)",
+                sentence,
+                flags=re.IGNORECASE,
+            )
+
+            for clause in clauses:
+                has_preferred_marker = bool(
+                    PREFERRED_MARKER_RE.search(clause)
+                )
+                has_optional_marker = bool(
+                    OPTIONAL_MARKER_RE.search(clause)
+                )
+
+                if has_preferred_marker:
+                    preferred.update(_tokens(clause))
+                elif (
+                    REQUIREMENT_MARKER_RE.search(clause)
+                    and not has_optional_marker
+                ):
+                    required.update(_tokens(clause))
+
+    # A term explicitly classified both ways is ambiguous. Do not count it
+    # as a definite requirement or preference.
+    overlap = required & preferred
+    required.difference_update(overlap)
+    preferred.difference_update(overlap)
+
+    return required, preferred
+
+
+def _requirement_terms(text: str) -> set[str]:
+    """Backward-compatible access to explicitly required terms."""
+    required, _ = _requirement_classifications(text)
     return required
 
 
@@ -537,7 +589,25 @@ def score_resume_job_match(
 
     title_tokens, title_phrases = _evidence(title or "")
     description_tokens, description_phrases = _evidence(description or "")
-    requirement_tokens = _requirement_terms(description or "")
+
+    required_terms, preferred_terms = _requirement_classifications(
+        description or ""
+    )
+    requirement_tokens = required_terms
+
+    def classify_resume_evidence(terms: set[str]) -> tuple[list[str], list[str]]:
+        found = sorted(
+            term for term in terms if _term_key(term) in resume_keys
+        )
+        not_found = sorted(terms - set(found))
+        return found, not_found
+
+    required_terms_found, required_terms_not_found = (
+        classify_resume_evidence(required_terms)
+    )
+    preferred_terms_found, preferred_terms_not_found = (
+        classify_resume_evidence(preferred_terms)
+    )
 
     title_score = _combined_coverage(title_tokens, title_phrases, resume_keys, weigh)
     description_score = _combined_coverage(
@@ -568,6 +638,10 @@ def score_resume_job_match(
             "match_score": 0,
             "matched_terms": [],
             "terms_not_found_in_resume": [],
+            "required_terms_found": required_terms_found,
+            "required_terms_not_found": required_terms_not_found,
+            "preferred_terms_found": preferred_terms_found,
+            "preferred_terms_not_found": preferred_terms_not_found,
             "match_reasons": [
                 "Not enough informative text was found in the job title or description."
             ],
@@ -669,6 +743,10 @@ def score_resume_job_match(
         "match_score": max(0, min(100, score)),
         "matched_terms": matched_terms,
         "terms_not_found_in_resume": missing_terms,
+        "required_terms_found": required_terms_found,
+        "required_terms_not_found": required_terms_not_found,
+        "preferred_terms_found": preferred_terms_found,
+        "preferred_terms_not_found": preferred_terms_not_found,
         "match_reasons": reasons,
     }
 

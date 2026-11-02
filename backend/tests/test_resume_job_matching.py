@@ -291,3 +291,59 @@ def test_title_overlap_does_not_dominate_weak_description_match():
     )
 
     assert result["match_score"] < 45
+
+
+def test_required_and_preferred_skills_are_separated_in_mixed_sentence():
+    from app.services.resume_job_matching import _requirement_classifications
+
+    required, preferred = _requirement_classifications(
+        "Python is required, while Docker is preferred."
+    )
+
+    assert "python" in required
+    assert "docker" not in required
+    assert "docker" in preferred
+    assert "python" not in preferred
+
+
+def test_requirement_and_preference_sections_are_separated():
+    from app.services.resume_job_matching import _requirement_classifications
+
+    required, preferred = _requirement_classifications(
+        """
+        Requirements:
+        - Python
+        - FastAPI
+
+        Nice to have:
+        - Docker
+        - Kubernetes
+        """
+    )
+
+    assert {"python", "fastapi"} <= required
+    assert {"docker", "kubernetes"} <= preferred
+
+
+def test_not_required_skill_is_not_classified_as_preferred():
+    from app.services.resume_job_matching import _requirement_classifications
+
+    required, preferred = _requirement_classifications(
+        "Kubernetes is not required."
+    )
+
+    assert "kubernetes" not in required
+    assert "kubernetes" not in preferred
+
+
+def test_required_and_preferred_skills_are_separated_without_comma():
+    from app.services.resume_job_matching import _requirement_classifications
+
+    required, preferred = _requirement_classifications(
+        "Python is required but Docker is preferred."
+    )
+
+    assert "python" in required
+    assert "python" not in preferred
+    assert "docker" in preferred
+    assert "docker" not in required
