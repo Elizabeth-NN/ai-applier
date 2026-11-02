@@ -12,6 +12,7 @@ import {
   SquaresFour,
   Lightning,
   Files,
+  UserCircle,
   Briefcase,
   ChartPieSlice,
   GearSix,
@@ -39,6 +40,7 @@ import ApplicationBatches from "@/components/ApplicationBatches";
 import ApplicationExecutions from "@/components/ApplicationExecutions";
 import CoverLetterDrafts from "@/components/CoverLetterDrafts";
 import MyDocuments from "@/components/MyDocuments";
+import CandidateProfile from "@/components/CandidateProfile";
 import ReusableAnswers from "@/components/ReusableAnswers";
 import Insights from "@/components/Insights";
 
@@ -118,6 +120,7 @@ type JobSearchResult = {
   skip: number;
   limit: number;
 };
+type ParsedResumeFields = Record<string, string | string[]>;
 
 /* -------------------------------------------------------------------------- */
 /*  View-model types                                                          */
@@ -149,6 +152,7 @@ type PageName =
   | "Dashboard"
   | "Find Jobs"
   | "Resume Match"
+  | "Candidate Profile"
   | "My Documents"
   | "Reusable Answers"
   | "Cover Letter Drafts"
@@ -190,6 +194,7 @@ const navGroups: NavGroup[] = [
   {
     heading: "Prepare",
     items: [
+      { page: "Candidate Profile", icon: UserCircle },
       { page: "My Documents", icon: Files },
       { page: "Reusable Answers", icon: ChatsCircle },
       { page: "Cover Letter Drafts", icon: FileText },
@@ -224,6 +229,10 @@ const pageMeta: Record<PageName, { title: string; description: string }> = {
   "Resume Match": {
     title: "Resume match",
     description: "Compare your resume with job descriptions to see the overlap.",
+  },
+  "Candidate Profile": {
+    title: "Candidate profile",
+    description: "Maintain your professional details, skills and career experience.",
   },
   "My Documents": {
     title: "My documents",
@@ -297,6 +306,20 @@ const pipelineColumns = [
 ] as const;
 
 const PAGE_SIZE = 20;
+
+const parsedFieldLabels: [string, string][] = [
+  ["full_name", "Full name"],
+  ["first_name", "First name"],
+  ["last_name", "Last name"],
+  ["email", "Email"],
+  ["phone", "Phone"],
+  ["location", "Location"],
+  ["headline", "Headline"],
+  ["linkedin_url", "LinkedIn"],
+  ["github_url", "GitHub"],
+  ["summary", "Summary"],
+  ["skills", "Skills"],
+];
 
 async function apiRequest<T>(
   path: string,
@@ -1264,6 +1287,17 @@ export default function DashboardPage() {
   const [resumeMatchError, setResumeMatchError] = useState("");
   const [resumeMatchNotice, setResumeMatchNotice] = useState("");
 
+  /* ---- Candidate profile autofill ---- */
+const [profileFillLoading, setProfileFillLoading] = useState<
+  "" | "preview" | "fill"
+>("");
+const [profilePreview, setProfilePreview] =
+  useState<ParsedResumeFields | null>(null);
+const [overwriteProfile, setOverwriteProfile] = useState(false);
+const [profileFillError, setProfileFillError] = useState("");
+const [profileFillNotice, setProfileFillNotice] = useState("");
+const [profileRefreshKey, setProfileRefreshKey] = useState(0);
+
   /* ---- Applications ---- */
   const [applications, setApplications] = useState<ApiApplication[]>([]);
   const [trackedApiJobs, setTrackedApiJobs] = useState<ApiJob[]>([]);
@@ -1329,7 +1363,11 @@ export default function DashboardPage() {
       setDraftToOpenId(null);
 
       // Resumes may have been uploaded in My Documents, so refresh when they matter.
-      if (page === "Dashboard" || page === "Resume Match") {
+      if (
+        page === "Dashboard" ||
+        page === "Resume Match" ||
+        page === "Candidate Profile"
+      ) {
         void loadResumes();
       }
 
@@ -1734,6 +1772,12 @@ export default function DashboardPage() {
       done: resumes.length > 0,
     },
     {
+      title: "Complete your profile",
+      description: "Fill your candidate profile automatically from your resume.",
+      cta: "Fill profile",
+      page: "Candidate Profile",
+    },
+    {
       title: "Find and save jobs",
       description: "Search listings and save the ones worth pursuing.",
       cta: "Browse jobs",
@@ -1900,6 +1944,86 @@ export default function DashboardPage() {
       );
     } finally {
       setMatchingLoading(false);
+    }
+  }
+
+  function resetProfileFillMessages() {
+    setProfilePreview(null);
+    setProfileFillError("");
+    setProfileFillNotice("");
+  }
+
+  async function previewProfileFromResume() {
+    if (!selectedResumeId || profileFillLoading) return;
+
+    setProfileFillLoading("preview");
+    resetProfileFillMessages();
+
+    try {
+      const token = await getToken();
+      if (!token) throw new Error("Please sign in again.");
+
+      const result = await apiRequest<ParsedResumeFields>(
+        `/api/resumes/${selectedResumeId}/parse`,
+        token,
+      );
+
+      if (Object.keys(result).length === 0) {
+        setProfileFillError(
+          "We couldn't find any profile details in this resume.",
+        );
+      } else {
+        setProfilePreview(result);
+      }
+    } catch (err) {
+      setProfileFillError(
+        err instanceof Error ? err.message : "Could not read your resume.",
+      );
+    } finally {
+      setProfileFillLoading("");
+    }
+  }
+
+  async function fillProfileFromResume() {
+    if (!selectedResumeId || profileFillLoading) return;
+
+    if (
+      overwriteProfile &&
+      !window.confirm(
+        "This will replace existing profile details with values from your resume. Continue?",
+      )
+    ) {
+      return;
+    }
+
+    setProfileFillLoading("fill");
+    resetProfileFillMessages();
+
+    try {
+      const token = await getToken();
+      if (!token) throw new Error("Please sign in again.");
+
+      await apiRequest(
+        `/api/candidate-profile/from-resume/${selectedResumeId}?overwrite=${overwriteProfile}`,
+        token,
+        { method: "POST" },
+      );
+
+      // Remount the profile form so it loads the updated data.
+      setProfileRefreshKey((current) => current + 1);
+      setProfileFillNotice(
+        overwriteProfile
+          ? "Profile updated from your resume."
+          : "Empty profile fields were filled from your resume. Existing details were kept.",
+      );
+    } catch (err) {
+      setProfileFillError(
+        err instanceof Error
+          ? err.message
+          : "Could not fill your profile from the resume.",
+      );
+    } finally {
+      setProfileFillLoading("");
     }
   }
 
@@ -2839,6 +2963,151 @@ export default function DashboardPage() {
                     </div>
                   )}
                 </section>
+              )}
+
+              {/* ========================== Candidate Profile ======================== */}
+              {activePage === "Candidate Profile" && (
+                <div className="space-y-6">
+                  <section className="space-y-4 rounded-2xl border border-violet-100 bg-white p-5 sm:p-6">
+                    <div>
+                      <h2 className="flex items-center gap-2 text-lg font-extrabold text-slate-900">
+                        <FileText size={21} className="text-violet-600" />
+                        Fill from resume
+                      </h2>
+                      <p className="mt-1 max-w-2xl text-sm text-slate-500">
+                        Pull your name, contact details, summary and skills out of an
+                        uploaded resume. Detection is automatic, so check the results
+                        before relying on them.
+                      </p>
+                    </div>
+
+                    {resumes.length === 0 && !resumesLoading ? (
+                      <p className="text-sm text-slate-600">
+                        Upload a PDF or DOCX resume first.
+                        <button
+                          type="button"
+                          onClick={() => goTo("My Documents")}
+                          className="ml-1 font-semibold text-violet-700 underline underline-offset-2"
+                        >
+                          Open My Documents
+                        </button>
+                      </p>
+                    ) : (
+                      <>
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+                          <label className="min-w-0 flex-1 space-y-1.5">
+                            <span className="text-sm font-semibold text-slate-700">
+                              Resume
+                            </span>
+                            <select
+                              value={selectedResumeId}
+                              onChange={(event) => {
+                                setSelectedResumeId(event.target.value);
+                                resetProfileFillMessages();
+                              }}
+                              disabled={resumesLoading || profileFillLoading !== ""}
+                              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm"
+                            >
+                              <option value="">
+                                {resumesLoading ? "Loading resumes..." : "Choose a resume"}
+                              </option>
+                              {resumes.map((resume) => (
+                                <option key={resume.id} value={String(resume.id)}>
+                                  {resume.original_filename}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+
+                          <button
+                            type="button"
+                            onClick={() => void previewProfileFromResume()}
+                            disabled={!selectedResumeId || profileFillLoading !== ""}
+                            className="rounded-xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {profileFillLoading === "preview"
+                              ? "Reading resume..."
+                              : "Preview details"}
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => void fillProfileFromResume()}
+                            disabled={!selectedResumeId || profileFillLoading !== ""}
+                            className="rounded-xl bg-violet-600 px-5 py-3 text-sm font-bold text-white transition hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {profileFillLoading === "fill"
+                              ? "Filling profile..."
+                              : "Fill my profile"}
+                          </button>
+                        </div>
+
+                        <label className="flex items-start gap-2 text-sm text-slate-600">
+                          <input
+                            type="checkbox"
+                            checked={overwriteProfile}
+                            onChange={(event) => setOverwriteProfile(event.target.checked)}
+                            className="mt-0.5"
+                          />
+                          <span>
+                            Replace details I have already entered
+                            <span className="block text-xs text-slate-400">
+                              Off by default: only empty fields are filled.
+                            </span>
+                          </span>
+                        </label>
+                      </>
+                    )}
+
+                    {profileFillError && (
+                      <p
+                        role="alert"
+                        className="rounded-xl bg-rose-50 p-3 text-sm text-rose-700"
+                      >
+                        {profileFillError}
+                      </p>
+                    )}
+
+                    {profileFillNotice && (
+                      <p
+                        role="status"
+                        className="rounded-xl bg-emerald-50 p-3 text-sm text-emerald-800"
+                      >
+                        {profileFillNotice}
+                      </p>
+                    )}
+
+                    {profilePreview && (
+                      <div className="rounded-xl border border-slate-100 bg-slate-50 p-4">
+                        <p className="text-xs font-bold tracking-wide text-slate-500 uppercase">
+                          Detected in your resume
+                        </p>
+                        <dl className="mt-3 grid gap-x-6 gap-y-3 sm:grid-cols-2">
+                          {parsedFieldLabels
+                            .filter(([key]) => profilePreview[key] !== undefined)
+                            .map(([key, label]) => {
+                              const value = profilePreview[key];
+                              return (
+                                <div
+                                  key={key}
+                                  className={key === "summary" ? "sm:col-span-2" : ""}
+                                >
+                                  <dt className="text-xs font-semibold text-slate-500">
+                                    {label}
+                                  </dt>
+                                  <dd className="mt-0.5 break-words text-sm text-slate-800">
+                                    {Array.isArray(value) ? value.join(", ") : value}
+                                  </dd>
+                                </div>
+                              );
+                            })}
+                        </dl>
+                      </div>
+                    )}
+                  </section>
+
+                  <CandidateProfile key={profileRefreshKey} />
+                </div>
               )}
 
               {/* ============================ My Documents ========================== */}
