@@ -1,3 +1,4 @@
+from app.models.candidate_profile import CandidateProfile
 from app.models.candidate_answer import CandidateAnswer
 from app.models.application import Application
 from app.models.application_batch import ApplicationBatch, ApplicationBatchItem
@@ -8,6 +9,7 @@ from app.models.job import Job
 from app.models.resume import Resume
 
 __all__ = [
+    "CandidateProfile",
     "CandidateAnswer",
     "HimalayasIngestionState",
     "Job",
