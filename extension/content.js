@@ -1,23 +1,42 @@
 function findCoverLetterField() {
-  const labels = Array.from(document.querySelectorAll("label"));
+  const matchingFields = new Set();
 
-  const label = labels.find((element) =>
-    /cover letter/i.test(element.textContent || "")
-  );
+  for (const field of document.querySelectorAll("textarea")) {
+    const labelTexts = [];
 
-  if (!label) return null;
+    // Native labels include both <label for="..."> and nested labels.
+    if (field.labels) {
+      for (const label of field.labels) {
+        labelTexts.push(label.textContent || "");
+      }
+    }
 
-  const fieldId = label.getAttribute("for");
+    // Explicit accessible name.
+    labelTexts.push(field.getAttribute("aria-label") || "");
 
-  if (fieldId) {
-    const field = document.getElementById(fieldId);
-    if (field instanceof HTMLTextAreaElement) return field;
+    // Accessible name supplied by one or more referenced elements.
+    const labelledBy = field.getAttribute("aria-labelledby") || "";
+
+    for (const id of labelledBy.split(/\s+/).filter(Boolean)) {
+      const referencedElement = document.getElementById(id);
+
+      if (referencedElement) {
+        labelTexts.push(referencedElement.textContent || "");
+      }
+    }
+
+    const hasCoverLetterLabel = labelTexts.some((text) =>
+      /\bcover[\s-]*letter\b/i.test(normaliseLabel(text))
+    );
+
+    if (hasCoverLetterLabel && isVisibleField(field)) {
+      matchingFields.add(field);
+    }
   }
 
-  const nestedField = label.querySelector("textarea");
-
-  return nestedField instanceof HTMLTextAreaElement
-    ? nestedField
+  // Never guess if the page contains multiple matching fields.
+  return matchingFields.size === 1
+    ? [...matchingFields][0]
     : null;
 }
 
@@ -161,7 +180,12 @@ function prepareApplication(application) {
 
     if (!field) {
       messages.push("No clearly labelled cover-letter field was found.");
-    } else if (field.disabled || field.readOnly) {
+    } else if (
+      field.disabled ||
+      field.readOnly ||
+      field.getAttribute("aria-disabled") === "true" ||
+      field.getAttribute("aria-readonly") === "true"
+    ) {
       messages.push("The cover-letter field is not editable.");
     } else if (field.value.trim()) {
       messages.push("The existing cover-letter text was left unchanged.");
