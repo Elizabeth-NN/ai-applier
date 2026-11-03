@@ -619,10 +619,145 @@ def prepare_resume_section_features(
     return section_features
 
 
+PROFILE_EVIDENCE_SECTIONS = (
+    "skills",
+    "experience",
+    "projects",
+    "education",
+    "certifications",
+    "summary",
+)
+
+PROFILE_ENTRY_TEXT_FIELDS = {
+    "experience": (
+        "title",
+        "description",
+        "summary",
+        "responsibilities",
+        "achievements",
+        "technologies",
+        "tools",
+        "skills",
+    ),
+    "projects": (
+        "description",
+        "summary",
+        "responsibilities",
+        "achievements",
+        "technologies",
+        "tools",
+        "skills",
+    ),
+    "education": (
+        "qualification",
+        "degree",
+        "field_of_study",
+        "coursework",
+        "description",
+        "skills",
+    ),
+    "certifications": (
+        "name",
+        "description",
+        "skills",
+        "technologies",
+        "tools",
+    ),
+}
+
+
+def prepare_candidate_profile_section_features(
+    profile: Mapping[str, object],
+) -> dict[str, frozenset[str]]:
+    """Prepare matching evidence from selected candidate-profile fields.
+
+    Contact details, links, target roles, work preferences, organization
+    names, dates, and other arbitrary JSON fields are deliberately excluded.
+    """
+    section_text: dict[str, str] = {}
+
+    skills = profile.get("skills", [])
+    if isinstance(skills, list):
+        section_text["skills"] = "\\n".join(
+            value for value in skills if isinstance(value, str)
+        )
+    else:
+        section_text["skills"] = ""
+
+    for section, allowed_fields in PROFILE_ENTRY_TEXT_FIELDS.items():
+        entries = profile.get(section, [])
+        values: list[str] = []
+
+        if isinstance(entries, list):
+            for entry in entries:
+                if not isinstance(entry, Mapping):
+                    continue
+
+                for field in allowed_fields:
+                    value = entry.get(field)
+
+                    if isinstance(value, str):
+                        values.append(value)
+                    elif isinstance(value, list):
+                        values.extend(
+                            item for item in value if isinstance(item, str)
+                        )
+
+        section_text[section] = "\\n".join(values)
+
+    summary_values = (
+        profile.get("headline"),
+        profile.get("professional_summary"),
+    )
+    section_text["summary"] = "\\n".join(
+        value for value in summary_values if isinstance(value, str)
+    )
+
+    return {
+        section: prepare_resume_features(value)
+        for section, value in section_text.items()
+    }
+
+
+
+def classify_match_terms(
+    terms: Iterable[str],
+    resume_features: frozenset[str],
+    profile_features: frozenset[str],
+) -> dict[str, list[str]]:
+    """Classify displayed match terms by their evidence sources."""
+    resume_terms: list[str] = []
+    profile_terms: list[str] = []
+    both_terms: list[str] = []
+    profile_only_terms: list[str] = []
+
+    for term in sorted(set(terms)):
+        term_key = _term_key(term)
+        in_resume = term_key in resume_features
+        in_profile = term_key in profile_features
+
+        if in_resume:
+            resume_terms.append(term)
+        if in_profile:
+            profile_terms.append(term)
+        if in_resume and in_profile:
+            both_terms.append(term)
+        elif in_profile:
+            profile_only_terms.append(term)
+
+    return {
+        "resume": resume_terms,
+        "profile": profile_terms,
+        "both": both_terms,
+        "profile_only": profile_only_terms,
+    }
+
+
 def build_requirement_term_evidence(
     description: str | None,
     section_features: Mapping[str, frozenset[str]],
     company: str | None = None,
+    section_names: Sequence[str] = RESUME_EVIDENCE_SECTIONS,
 ) -> dict[str, list[str]]:
     """Show which resume sections contain each required or preferred term."""
     cleaned_description = _clean_text(description or "", company)
@@ -636,7 +771,7 @@ def build_requirement_term_evidence(
         term_key = _term_key(term)
         evidence[term] = [
             section
-            for section in RESUME_EVIDENCE_SECTIONS
+            for section in section_names
             if term_key in section_features.get(section, frozenset())
         ]
 

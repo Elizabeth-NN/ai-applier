@@ -10,12 +10,16 @@ from sqlalchemy.orm import Session
 from app.core.auth import CurrentAdmin, CurrentUser
 from app.api import resumes as resumes_api
 from app.db.dependencies import get_db
+from app.models.candidate_profile import CandidateProfile
 from app.models.job import Job
 from app.services.resume_text import extract_resume_text
 from app.services.structured_resume_parser import parse_resume_text
 from app.services.resume_job_matching import (
+    PROFILE_EVIDENCE_SECTIONS,
     build_requirement_term_evidence,
     build_term_weights,
+    classify_match_terms,
+    prepare_candidate_profile_section_features,
     prepare_job_matching_text,
     prepare_resume_features,
     prepare_resume_section_features,
@@ -451,9 +455,39 @@ def match_jobs_to_resume(
     prepared_resume_features = prepare_resume_features(resume_text)
 
     # Parse once per request; section evidence explains where requirements
-    # appear without changing the existing relevance score.
+    # appear without changing the existing resume-only relevance score.
     structured_resume = parse_resume_text(resume_text)
     section_features = prepare_resume_section_features(structured_resume)
+
+    # Only the authenticated user's curated profile can contribute evidence.
+    # Contact details, target roles, links, and work preferences are excluded.
+    candidate_profile = db.scalar(
+        select(CandidateProfile).where(
+            CandidateProfile.user_id == user_id
+        )
+    )
+
+    profile_section_features: dict[str, frozenset[str]] = {}
+    profile_features = frozenset()
+
+    if candidate_profile is not None:
+        profile_section_features = prepare_candidate_profile_section_features(
+            {
+                "headline": candidate_profile.headline,
+                "professional_summary": candidate_profile.professional_summary,
+                "skills": candidate_profile.skills,
+                "experience": candidate_profile.experience,
+                "projects": candidate_profile.projects,
+                "education": candidate_profile.education,
+                "certifications": candidate_profile.certifications,
+            }
+        )
+        profile_features = frozenset().union(
+            *profile_section_features.values()
+        )
+
+    has_profile_evidence = bool(profile_features)
+    combined_features = prepared_resume_features | profile_features
 
     # Score from lightweight rows; full Job objects are only loaded for the
     # page that is returned.
@@ -473,6 +507,7 @@ def match_jobs_to_resume(
 
     scored = []
     for row in job_rows:
+        # Preserve the original resume-only score and evidence.
         match = score_resume_job_match(
             "",
             title=row.title,
@@ -486,11 +521,80 @@ def match_jobs_to_resume(
             section_features,
             company=row.company,
         )
+
+        if has_profile_evidence:
+            combined_match = score_resume_job_match(
+                "",
+                title=row.title,
+                description=row.description,
+                company=row.company,
+                prepared_resume_features=combined_features,
+                term_weights=term_weights,
+            )
+
+            matched_sources = classify_match_terms(
+                combined_match["matched_terms"],
+                prepared_resume_features,
+                profile_features,
+            )
+            required_sources = classify_match_terms(
+                combined_match["required_terms_found"],
+                prepared_resume_features,
+                profile_features,
+            )
+            preferred_sources = classify_match_terms(
+                combined_match["preferred_terms_found"],
+                prepared_resume_features,
+                profile_features,
+            )
+
+            match.update(
+                {
+                    "profile_match_score": combined_match["match_score"],
+                    "profile_matched_terms": matched_sources["profile"],
+                    "profile_only_matched_terms": matched_sources["profile_only"],
+                    "terms_not_found_in_resume_or_profile": (
+                        combined_match["terms_not_found_in_resume"]
+                    ),
+                    "required_terms_found_in_profile": (
+                        required_sources["profile"]
+                    ),
+                    "required_terms_found_in_resume_or_profile": (
+                        combined_match["required_terms_found"]
+                    ),
+                    "required_terms_not_found_in_resume_or_profile": (
+                        combined_match["required_terms_not_found"]
+                    ),
+                    "preferred_terms_found_in_profile": (
+                        preferred_sources["profile"]
+                    ),
+                    "preferred_terms_found_in_resume_or_profile": (
+                        combined_match["preferred_terms_found"]
+                    ),
+                    "preferred_terms_not_found_in_resume_or_profile": (
+                        combined_match["preferred_terms_not_found"]
+                    ),
+                    "profile_term_evidence": build_requirement_term_evidence(
+                        row.description,
+                        profile_section_features,
+                        company=row.company,
+                        section_names=PROFILE_EVIDENCE_SECTIONS,
+                    ),
+                    "profile_match_reasons": combined_match["match_reasons"],
+                }
+            )
+
         scored.append((row, match))
 
-    # Rank the full result set before applying pagination.
+    # Rank using combined evidence when available, retaining the resume-only
+    # score as a tie-breaker. Pagination still happens after full ranking.
     scored.sort(
         key=lambda pair: (
+            (
+                pair[1]["profile_match_score"]
+                if pair[1].get("profile_match_score") is not None
+                else pair[1]["match_score"]
+            ),
             pair[1]["match_score"],
             pair[0].created_at,
             pair[0].id,

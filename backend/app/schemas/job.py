@@ -87,8 +87,9 @@ class JobSearchResult(BaseModel):
 
 
 class ResumeJobMatchItem(JobRead):
-    """A job with explainable text overlap against a selected resume."""
+    """A job with explainable resume-only and profile-aware text matching."""
 
+    # Resume-only baseline. These fields retain their existing meaning.
     match_score: int = Field(ge=0, le=100)
     matched_terms: list[str]
     terms_not_found_in_resume: list[str]
@@ -98,6 +99,21 @@ class ResumeJobMatchItem(JobRead):
     preferred_terms_not_found: list[str]
     term_evidence: dict[str, list[str]]
     match_reasons: list[str]
+
+    # Combined resume + candidate-profile evidence. None means no usable
+    # candidate-profile evidence was available for matching.
+    profile_match_score: int | None = Field(default=None, ge=0, le=100)
+    profile_matched_terms: list[str] = Field(default_factory=list)
+    profile_only_matched_terms: list[str] = Field(default_factory=list)
+    terms_not_found_in_resume_or_profile: list[str] = Field(default_factory=list)
+    required_terms_found_in_profile: list[str] = Field(default_factory=list)
+    required_terms_found_in_resume_or_profile: list[str] = Field(default_factory=list)
+    required_terms_not_found_in_resume_or_profile: list[str] = Field(default_factory=list)
+    preferred_terms_found_in_profile: list[str] = Field(default_factory=list)
+    preferred_terms_found_in_resume_or_profile: list[str] = Field(default_factory=list)
+    preferred_terms_not_found_in_resume_or_profile: list[str] = Field(default_factory=list)
+    profile_term_evidence: dict[str, list[str]] = Field(default_factory=dict)
+    profile_match_reasons: list[str] = Field(default_factory=list)
 
 
 class ResumeJobMatchResult(BaseModel):
