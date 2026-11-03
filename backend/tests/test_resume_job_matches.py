@@ -13,6 +13,7 @@ from app.core.auth import require_user
 from app.db.dependencies import get_db
 from app.db.session import Base
 from app.main import app
+from app.models.candidate_profile import CandidateProfile
 from app.models.job import Job
 from app.models.resume import Resume
 
@@ -118,6 +119,22 @@ def create_job(
         return job.id
 
 
+
+def create_candidate_profile(
+    context,
+    *,
+    user_id="user_test_1",
+    **values,
+):
+    profile = CandidateProfile(user_id=user_id, **values)
+
+    with context["factory"]() as db:
+        db.add(profile)
+        db.commit()
+        db.refresh(profile)
+        return profile.id
+
+
 def test_matches_return_explanations_and_preserve_eligibility(match_context):
     resume_id = create_resume(match_context)
     job_id = create_job(
@@ -178,6 +195,91 @@ def test_matches_separate_required_and_preferred_evidence(match_context):
     assert item["required_terms_not_found"] == ["kubernetes"]
     assert item["preferred_terms_found"] == ["docker"]
     assert item["preferred_terms_not_found"] == ["aws", "terraform"]
+
+
+def test_profile_evidence_adds_terms_to_combined_match(match_context):
+    resume_id = create_resume(match_context)
+    create_candidate_profile(match_context, skills=["Kubernetes"])
+    create_job(
+        match_context,
+        title="Kubernetes Backend Engineer",
+        description=(
+            "Required qualifications:\\n"
+            "- Kubernetes\\n"
+            "- Python\\n"
+            "- FastAPI"
+        ),
+    )
+
+    response = match_context["client"].get(
+        f"/api/jobs/matches?resume_id={resume_id}"
+    )
+
+    assert response.status_code == 200, response.text
+    item = response.json()["items"][0]
+
+    assert item["profile_match_score"] > item["match_score"]
+    assert "kubernetes" in item["required_terms_not_found"]
+    assert "kubernetes" in item["profile_only_matched_terms"]
+    assert "kubernetes" in item["required_terms_found_in_profile"]
+    assert "kubernetes" in item["required_terms_found_in_resume_or_profile"]
+    assert "kubernetes" not in item["required_terms_not_found_in_resume_or_profile"]
+    assert "kubernetes" not in item["terms_not_found_in_resume_or_profile"]
+    assert item["profile_term_evidence"]["kubernetes"] == ["skills"]
+
+
+def test_matching_does_not_use_another_users_profile(match_context):
+    resume_id = create_resume(match_context)
+    create_candidate_profile(
+        match_context,
+        user_id="different_user",
+        skills=["Kubernetes"],
+    )
+    create_job(
+        match_context,
+        title="Kubernetes Backend Engineer",
+        description=(
+            "Required qualifications:\\n"
+            "- Kubernetes\\n"
+            "- Python"
+        ),
+    )
+
+    response = match_context["client"].get(
+        f"/api/jobs/matches?resume_id={resume_id}"
+    )
+
+    assert response.status_code == 200, response.text
+    item = response.json()["items"][0]
+
+    assert item["profile_match_score"] is None
+    assert item["profile_only_matched_terms"] == []
+    assert item["required_terms_not_found"] == ["kubernetes"]
+    assert item["required_terms_found_in_resume_or_profile"] == []
+    assert item["required_terms_not_found_in_resume_or_profile"] == []
+    assert item["profile_term_evidence"] == {}
+
+
+def test_duplicate_resume_and_profile_terms_do_not_inflate_score(match_context):
+    resume_id = create_resume(match_context)
+    create_candidate_profile(match_context, skills=["Python"])
+    create_job(
+        match_context,
+        title="Python Backend Developer",
+        description="Build APIs with Python and FastAPI for web applications.",
+    )
+
+    response = match_context["client"].get(
+        f"/api/jobs/matches?resume_id={resume_id}"
+    )
+
+    assert response.status_code == 200, response.text
+    item = response.json()["items"][0]
+
+    assert item["profile_match_score"] == item["match_score"]
+    assert "python" in item["profile_matched_terms"]
+    assert "python" not in item["profile_only_matched_terms"]
+
 
 def test_user_cannot_match_against_another_users_resume(match_context):
     resume_id = create_resume(match_context)

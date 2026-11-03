@@ -414,7 +414,13 @@ export default function CandidateProfile() {
 
   // Once the user edits again, the old "saved" message no longer applies.
   useEffect(() => {
-    if (dirty) setNotice("");
+    if (!dirty) return;
+
+    const timer = window.setTimeout(() => {
+      setNotice("");
+    }, 0);
+
+    return () => window.clearTimeout(timer);
   }, [dirty]);
 
   // Warn before leaving the page with unsaved edits.

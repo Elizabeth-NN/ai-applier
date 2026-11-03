@@ -103,6 +103,18 @@ type ResumeJobMatch = ApiJob & {
   preferred_terms_not_found: string[];
   term_evidence: Record<string, string[]>;
   match_reasons: string[];
+  profile_match_score: number | null;
+  profile_matched_terms: string[];
+  profile_only_matched_terms: string[];
+  terms_not_found_in_resume_or_profile: string[];
+  required_terms_found_in_profile: string[];
+  required_terms_found_in_resume_or_profile: string[];
+  required_terms_not_found_in_resume_or_profile: string[];
+  preferred_terms_found_in_profile: string[];
+  preferred_terms_found_in_resume_or_profile: string[];
+  preferred_terms_not_found_in_resume_or_profile: string[];
+  profile_term_evidence: Record<string, string[]>;
+  profile_match_reasons: string[];
 };
 
 type ResumeJobMatchResult = {
@@ -1087,12 +1099,28 @@ function ResumeMatchCard({
           </div>
         </div>
 
-        <div className="shrink-0 rounded-xl bg-violet-50 px-4 py-3 text-center">
-          <p className="text-2xl font-extrabold text-violet-800">
-            {match.match_score}
-            <span className="text-sm">/100</span>
-          </p>
-          <p className="text-xs font-semibold text-violet-700">Text match</p>
+        <div className="flex shrink-0 flex-wrap gap-2">
+          <div className="rounded-xl bg-slate-100 px-4 py-3 text-center">
+            <p className="text-2xl font-extrabold text-slate-800">
+              {match.match_score}
+              <span className="text-sm">/100</span>
+            </p>
+            <p className="text-xs font-semibold text-slate-600">
+              Resume text match
+            </p>
+          </div>
+
+          {match.profile_match_score !== null && (
+            <div className="rounded-xl bg-violet-50 px-4 py-3 text-center">
+              <p className="text-2xl font-extrabold text-violet-800">
+                {match.profile_match_score}
+                <span className="text-sm">/100</span>
+              </p>
+              <p className="text-xs font-semibold text-violet-700">
+                Resume + profile
+              </p>
+            </div>
+          )}
         </div>
       </div>
 
@@ -1103,6 +1131,67 @@ function ResumeMatchCard({
           ))}
         </ul>
       )}
+
+      {match.profile_match_score !== null && (
+        <div className="mt-4 rounded-lg border border-violet-100 bg-violet-50/50 p-3">
+          <p className="text-sm font-semibold text-violet-900">
+            Combined resume and candidate-profile match
+          </p>
+          {match.profile_match_reasons.length > 0 && (
+            <ul className="mt-2 space-y-1 text-sm text-slate-700">
+              {match.profile_match_reasons.map((reason, index) => (
+                <li key={`${index}-${reason}`}>{reason}</li>
+              ))}
+            </ul>
+          )}
+          <p className="mt-2 text-xs text-slate-600">
+            Candidate-profile details are self-reported and curated by you,
+            not independently verified. Both scores measure text relevance,
+            not hiring probability or employer eligibility.
+          </p>
+        </div>
+      )}
+
+      {match.profile_only_matched_terms.length > 0 && (
+        <div className="mt-4">
+          <p className="text-xs font-bold tracking-wide text-violet-700 uppercase">
+            Additional terms found in your candidate profile
+          </p>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {match.profile_only_matched_terms.map((term) => (
+              <span
+                key={term}
+                className="rounded-full bg-violet-50 px-2.5 py-1 text-xs font-medium text-violet-800"
+              >
+                {term}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {match.profile_match_score !== null &&
+        match.terms_not_found_in_resume_or_profile.length > 0 && (
+          <div className="mt-4">
+            <p className="text-xs font-bold tracking-wide text-slate-500 uppercase">
+              Terms not found in either source
+            </p>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {match.terms_not_found_in_resume_or_profile.map((term) => (
+                <span
+                  key={term}
+                  className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-800"
+                >
+                  {term}
+                </span>
+              ))}
+            </div>
+            <p className="mt-2 text-xs text-slate-500">
+              These terms were not found in the resume or candidate profile.
+              This does not prove you lack the skills.
+            </p>
+          </div>
+        )}
 
       {match.matched_terms.length > 0 && (
         <div className="mt-4">
@@ -1148,54 +1237,99 @@ function ResumeMatchCard({
         {
           label: "Required",
           found: match.required_terms_found,
-          notFound: match.required_terms_not_found,
+          profileFound: match.required_terms_found_in_profile,
+          combinedMissing: match.required_terms_not_found_in_resume_or_profile,
+          resumeMissing: match.required_terms_not_found,
         },
         {
           label: "Preferred",
           found: match.preferred_terms_found,
-          notFound: match.preferred_terms_not_found,
+          profileFound: match.preferred_terms_found_in_profile,
+          combinedMissing: match.preferred_terms_not_found_in_resume_or_profile,
+          resumeMissing: match.preferred_terms_not_found,
         },
-      ].map(({ label, found, notFound }) => (
-        (found.length > 0 || notFound.length > 0) && (
-          <div key={label} className="mt-4">
-            <p className="text-xs font-bold tracking-wide text-slate-500 uppercase">
-              {label} requirements
-            </p>
+      ].map(
+        ({
+          label,
+          found,
+          profileFound,
+          combinedMissing,
+          resumeMissing,
+        }) => {
+          const profileOnly = match.profile_match_score !== null
+            ? profileFound.filter((term) => !found.includes(term))
+            : [];
+          const notFound = match.profile_match_score !== null
+            ? combinedMissing
+            : resumeMissing;
 
-            {found.length > 0 && (
-              <div className="mt-2">
-                <p className="text-xs text-slate-500">Found in resume</p>
-                <div className="mt-1.5 flex flex-wrap gap-1.5">
-                  {found.map((term) => (
-                    <span
-                      key={term}
-                      className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-800"
-                    >
-                      {term}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
+          return (
+            (found.length > 0 ||
+              profileOnly.length > 0 ||
+              notFound.length > 0) && (
+              <div key={label} className="mt-4">
+                <p className="text-xs font-bold tracking-wide text-slate-500 uppercase">
+                  {label} requirements
+                </p>
 
-            {notFound.length > 0 && (
-              <div className="mt-2">
-                <p className="text-xs text-slate-500">Not found in resume</p>
-                <div className="mt-1.5 flex flex-wrap gap-1.5">
-                  {notFound.map((term) => (
-                    <span
-                      key={term}
-                      className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-800"
-                    >
-                      {term}
-                    </span>
-                  ))}
-                </div>
+                {found.length > 0 && (
+                  <div className="mt-2">
+                    <p className="text-xs text-slate-500">Found in resume</p>
+                    <div className="mt-1.5 flex flex-wrap gap-1.5">
+                      {found.map((term) => (
+                        <span
+                          key={term}
+                          className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-800"
+                        >
+                          {term}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {profileOnly.length > 0 && (
+                  <div className="mt-2">
+                    <p className="text-xs text-violet-700">
+                      Found only in candidate profile
+                    </p>
+                    <div className="mt-1.5 flex flex-wrap gap-1.5">
+                      {profileOnly.map((term) => (
+                        <span
+                          key={term}
+                          className="rounded-full bg-violet-50 px-2.5 py-1 text-xs font-medium text-violet-800"
+                        >
+                          {term}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {notFound.length > 0 && (
+                  <div className="mt-2">
+                    <p className="text-xs text-slate-500">
+                      {match.profile_match_score !== null
+                        ? "Not found in either source"
+                        : "Not found in resume"}
+                    </p>
+                    <div className="mt-1.5 flex flex-wrap gap-1.5">
+                      {notFound.map((term) => (
+                        <span
+                          key={term}
+                          className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-800"
+                        >
+                          {term}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
-            )}
-          </div>
-        )
-      ))}
+            )
+          );
+        },
+      )}
 
       {Object.entries(match.term_evidence).length > 0 && (
         <div className="mt-5 border-t border-slate-100 pt-4">
@@ -1237,6 +1371,35 @@ function ResumeMatchCard({
             document formatting. An unlocated term does not mean you lack
             that skill.
           </p>
+        </div>
+      )}
+
+      {Object.entries(match.profile_term_evidence).length > 0 && (
+        <div className="mt-5 border-t border-violet-100 pt-4">
+          <p className="text-xs font-bold tracking-wide text-violet-700 uppercase">
+            Requirement evidence by candidate-profile section
+          </p>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            {Object.entries(match.profile_term_evidence).map(
+              ([term, sections]) => (
+                <div
+                  key={term}
+                  className="rounded-lg border border-violet-100 bg-violet-50/40 p-3"
+                >
+                  <p className="text-sm font-semibold text-slate-800">{term}</p>
+                  <p className="mt-1 text-xs text-slate-600">
+                    Located in:{" "}
+                    {sections
+                      .map(
+                        (section) =>
+                          section.charAt(0).toUpperCase() + section.slice(1),
+                      )
+                      .join(", ")}
+                  </p>
+                </div>
+              ),
+            )}
+          </div>
         </div>
       )}
 
