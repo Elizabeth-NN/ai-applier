@@ -334,6 +334,7 @@ def prepare_application_execution(
                 "id": answer.id,
                 "question_key": answer.question_key,
                 "question_label": answer.question_label,
+                "question_aliases": list(answer.question_aliases or []),
                 "answer": answer.answer,
             }
             for answer in candidate_answers

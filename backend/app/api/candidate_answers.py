@@ -33,6 +33,7 @@ def create_candidate_answer(
         user_id=user_id,
         question_key=payload.question_key,
         question_label=payload.question_label.strip(),
+        question_aliases=payload.question_aliases,
         answer=payload.answer.strip(),
         is_user_authored=True,
         is_approved=False,
@@ -107,6 +108,8 @@ def update_candidate_answer(
         raise HTTPException(status_code=404, detail="Candidate answer not found.")
 
     answer.question_label = payload.question_label.strip()
+    if payload.question_aliases is not None:
+        answer.question_aliases = payload.question_aliases
     answer.answer = payload.answer.strip()
 
     # Revised text must be reviewed and approved again.

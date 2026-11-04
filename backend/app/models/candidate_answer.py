@@ -3,6 +3,7 @@ from datetime import datetime
 from sqlalchemy import (
     Boolean,
     DateTime,
+    JSON,
     Integer,
     String,
     Text,
@@ -39,6 +40,13 @@ class CandidateAnswer(Base):
 
     question_label: Mapped[str] = mapped_column(
         String(255),
+        nullable=False,
+    )
+
+    question_aliases: Mapped[list[str]] = mapped_column(
+        JSON,
+        default=list,
+        server_default="[]",
         nullable=False,
     )
 
