@@ -57,12 +57,14 @@ def create_answer(
     answer: str = "I have built Python applications.",
     question_label: str = "Python experience",
     confirm_user_authored: bool = True,
+    question_aliases: list[str] | None = None,
 ):
     return client.post(
         "/api/candidate-answers",
         json={
             "question_key": question_key,
             "question_label": question_label,
+            "question_aliases": question_aliases or [],
             "answer": answer,
             "confirm_user_authored": confirm_user_authored,
         },
@@ -285,3 +287,98 @@ def test_owner_can_delete_answer(test_context):
     assert client.get(
         f"/api/candidate-answers/{answer_id}"
     ).status_code == 404
+
+
+
+def test_create_answer_normalizes_and_deduplicates_question_aliases(test_context):
+    response = create_answer(
+        test_context["client"],
+        question_aliases=[
+            "  Briefly describe your Python experience  ",
+            "briefly describe your python experience",
+            "Python experience",
+        ],
+    )
+
+    assert response.status_code == 201
+    assert response.json()["question_aliases"] == [
+        "Briefly describe your Python experience"
+    ]
+
+
+def test_create_answer_defaults_to_no_question_aliases(test_context):
+    response = create_answer(test_context["client"])
+
+    assert response.status_code == 201
+    assert response.json()["question_aliases"] == []
+
+
+def test_create_answer_rejects_empty_question_alias(test_context):
+    response = create_answer(
+        test_context["client"],
+        question_aliases=["   "],
+    )
+
+    assert response.status_code == 422
+
+
+def test_create_answer_rejects_more_than_twenty_question_aliases(test_context):
+    response = create_answer(
+        test_context["client"],
+        question_aliases=[f"Alternative question {index}" for index in range(21)],
+    )
+
+    assert response.status_code == 422
+
+
+def test_updating_aliases_revokes_previous_approval(test_context):
+    client = test_context["client"]
+    created = create_answer(client)
+    answer_id = created.json()["id"]
+
+    approved = client.post(f"/api/candidate-answers/{answer_id}/approve")
+    assert approved.status_code == 200
+    assert approved.json()["is_approved"] is True
+
+    updated = client.patch(
+        f"/api/candidate-answers/{answer_id}",
+        json={
+            "question_label": "Python experience",
+            "question_aliases": [
+                "Briefly describe your Python software development experience"
+            ],
+            "answer": "I have built Python backend applications.",
+            "confirm_user_authored": True,
+        },
+    )
+
+    assert updated.status_code == 200
+    assert updated.json()["question_aliases"] == [
+        "Briefly describe your Python software development experience"
+    ]
+    assert updated.json()["is_user_authored"] is True
+    assert updated.json()["is_approved"] is False
+
+
+def test_update_without_aliases_preserves_existing_aliases(test_context):
+    client = test_context["client"]
+    created = create_answer(
+        client,
+        question_aliases=["Tell us about your Python experience"],
+    )
+    answer_id = created.json()["id"]
+
+    updated = client.patch(
+        f"/api/candidate-answers/{answer_id}",
+        json={
+            "question_label": "Python experience",
+            "answer": "I have updated my Python experience.",
+            "confirm_user_authored": True,
+        },
+    )
+
+    assert updated.status_code == 200
+    assert updated.json()["question_aliases"] == [
+        "Tell us about your Python experience"
+    ]
+    assert updated.json()["is_approved"] is False
