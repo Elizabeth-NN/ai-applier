@@ -226,7 +226,7 @@ function fillCandidateAnswers(candidateAnswers) {
     }
 
     // Preserve the exact user-authored snapshot text.
-    field.value = matches[0].answer;
+    field.value = matches[0].answer.answer;
     field.dispatchEvent(new Event("input", { bubbles: true }));
     field.dispatchEvent(new Event("change", { bubbles: true }));
 
