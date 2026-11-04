@@ -16,6 +16,7 @@ type CandidateAnswer = {
   id: number;
   question_key: string;
   question_label: string;
+  question_aliases: string[];
   answer: string;
   is_user_authored: boolean;
   is_approved: boolean;
@@ -81,6 +82,7 @@ export default function ReusableAnswers() {
   const [actionId, setActionId] = useState<number | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [questionLabel, setQuestionLabel] = useState("");
+  const [questionAliasesText, setQuestionAliasesText] = useState("");
   const [answerText, setAnswerText] = useState("");
   const [confirmed, setConfirmed] = useState(false);
   const [error, setError] = useState("");
@@ -122,6 +124,7 @@ export default function ReusableAnswers() {
   function resetForm() {
     setEditingId(null);
     setQuestionLabel("");
+    setQuestionAliasesText("");
     setAnswerText("");
     setConfirmed(false);
   }
@@ -129,6 +132,7 @@ export default function ReusableAnswers() {
   function startEditing(item: CandidateAnswer) {
     setEditingId(item.id);
     setQuestionLabel(item.question_label);
+    setQuestionAliasesText((item.question_aliases ?? []).join("\n"));
     setAnswerText(item.answer);
     setConfirmed(false);
     setError("");
@@ -148,6 +152,18 @@ export default function ReusableAnswers() {
 
     const label = questionLabel.trim();
     const text = answerText.trim();
+    const aliases = questionAliasesText
+      .split("\n")
+      .map((alias) => alias.trim().replace(/\s+/g, " "))
+      .filter(Boolean);
+    const uniqueAliases = aliases.filter(
+      (alias, index) =>
+        alias.toLocaleLowerCase() !== label.toLocaleLowerCase() &&
+        aliases.findIndex(
+          (candidate) =>
+            candidate.toLocaleLowerCase() === alias.toLocaleLowerCase(),
+        ) === index,
+    );
 
     if (!label || !text) {
       setError("Enter both a question label and an answer.");
@@ -156,6 +172,14 @@ export default function ReusableAnswers() {
 
     if (label.length > 255 || text.length > 10000) {
       setError("The question label must be at most 255 characters and the answer at most 10,000.");
+      return;
+    }
+
+    if (
+      uniqueAliases.length > 20 ||
+      uniqueAliases.some((alias) => alias.length > 255)
+    ) {
+      setError("Add no more than 20 aliases, with each alias at most 255 characters.");
       return;
     }
 
@@ -180,6 +204,7 @@ export default function ReusableAnswers() {
             method: "PATCH",
             body: JSON.stringify({
               question_label: label,
+              question_aliases: uniqueAliases,
               answer: text,
               confirm_user_authored: true,
             }),
@@ -192,6 +217,7 @@ export default function ReusableAnswers() {
           body: JSON.stringify({
             question_key: questionKey,
             question_label: label,
+            question_aliases: uniqueAliases,
             answer: text,
             confirm_user_authored: true,
           }),
@@ -332,6 +358,30 @@ export default function ReusableAnswers() {
           </div>
 
           <div>
+            <label
+              htmlFor="candidate-question-aliases"
+              className="mb-1.5 block text-sm font-semibold text-slate-700"
+            >
+              Alternative application question labels{" "}
+              <span className="font-normal text-slate-400">(optional)</span>
+            </label>
+            <textarea
+              id="candidate-question-aliases"
+              value={questionAliasesText}
+              onChange={(event) => setQuestionAliasesText(event.target.value)}
+              rows={3}
+              placeholder={"One exact alternative question per line\ne.g. Briefly describe your Python software development experience."}
+              className="w-full resize-y rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm leading-relaxed text-slate-900 outline-none transition focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
+            />
+            <p className="mt-1 text-xs leading-relaxed text-slate-500">
+              Add only wording you have checked on another application form.
+              Matching uses exact labels after basic whitespace and case
+              normalization; it does not guess by meaning. Each alias is
+              included in your approval. Editing aliases requires approval again.
+            </p>
+          </div>
+
+          <div>
             <label htmlFor="candidate-answer" className="mb-1.5 block text-sm font-semibold text-slate-700">
               Your answer
             </label>
@@ -411,6 +461,18 @@ export default function ReusableAnswers() {
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="min-w-0 flex-1">
                       <h3 className="font-bold text-slate-900">{item.question_label}</h3>
+                      {(item.question_aliases ?? []).length > 0 && (
+                        <div className="mt-2 rounded-lg bg-slate-50 p-3">
+                          <p className="text-xs font-semibold text-slate-600">
+                            Alternative question labels
+                          </p>
+                          <ul className="mt-1 list-inside list-disc space-y-1 text-xs text-slate-500">
+                            {item.question_aliases.map((alias) => (
+                              <li key={alias}>{alias}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
                       <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-relaxed text-slate-600">
                         {item.answer}
                       </p>
@@ -475,6 +537,18 @@ export default function ReusableAnswers() {
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0 flex-1">
                       <h3 className="font-bold text-slate-900">{item.question_label}</h3>
+                      {(item.question_aliases ?? []).length > 0 && (
+                        <div className="mt-2 rounded-lg bg-slate-50 p-3">
+                          <p className="text-xs font-semibold text-slate-600">
+                            Alternative question labels
+                          </p>
+                          <ul className="mt-1 list-inside list-disc space-y-1 text-xs text-slate-500">
+                            {item.question_aliases.map((alias) => (
+                              <li key={alias}>{alias}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
                       <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-relaxed text-slate-600">
                         {item.answer}
                       </p>
