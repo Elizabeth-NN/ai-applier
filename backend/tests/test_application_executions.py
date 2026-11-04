@@ -192,12 +192,14 @@ def create_approved_candidate_answer(
     user_id="user_test_1",
     approved=True,
     answer="I built and maintained Python applications.",
+    question_aliases=None,
 ):
     with context["db_factory"]() as db:
         candidate_answer = CandidateAnswer(
             user_id=user_id,
             question_key="python_experience",
             question_label="Describe your Python experience",
+            question_aliases=question_aliases or [],
             answer=answer,
             is_user_authored=True,
             is_approved=approved,
@@ -248,9 +250,13 @@ def test_prepare_rejects_another_users_candidate_answer(execution_context):
 
 def test_prepare_snapshots_exact_approved_candidate_answer(execution_context):
     answer_text = "I developed a Flask API and wrote its automated tests."
+    aliases = [
+        "Briefly describe your Python software development experience"
+    ]
     answer_id = create_approved_candidate_answer(
         execution_context,
         answer=answer_text,
+        question_aliases=aliases,
     )
 
     response = execution_context["client"].post(
@@ -277,6 +283,7 @@ def test_prepare_snapshots_exact_approved_candidate_answer(execution_context):
                 "id": answer_id,
                 "question_key": "python_experience",
                 "question_label": "Describe your Python experience",
+                "question_aliases": aliases,
                 "answer": answer_text,
             }
         ]
@@ -284,12 +291,19 @@ def test_prepare_snapshots_exact_approved_candidate_answer(execution_context):
         # Editing the answer bank must not alter an existing execution.
         answer = db.get(CandidateAnswer, answer_id)
         answer.answer = "A different answer added after preparation."
+        answer.question_aliases = ["A different question label"]
         db.commit()
         db.refresh(execution)
 
         assert (
             execution.application_payload["candidate_answers"][0]["answer"]
             == answer_text
+        )
+        assert (
+            execution.application_payload["candidate_answers"][0][
+                "question_aliases"
+            ]
+            == aliases
         )
 
 
@@ -327,9 +341,11 @@ def test_extension_handoff_returns_saved_candidate_answer_snapshot(
     execution_context,
 ):
     answer_text = "I have experience building Python backend services."
+    aliases = ["Tell us about your experience with Python"]
     answer_id = create_approved_candidate_answer(
         execution_context,
         answer=answer_text,
+        question_aliases=aliases,
     )
 
     with execution_context["db_factory"]() as db:
@@ -384,6 +400,7 @@ def test_extension_handoff_returns_saved_candidate_answer_snapshot(
             "id": answer_id,
             "question_key": "python_experience",
             "question_label": "Describe your Python experience",
+            "question_aliases": aliases,
             "answer": answer_text,
         }
     ]
