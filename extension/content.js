@@ -50,9 +50,31 @@ function normaliseLabel(value) {
 }
 
 function isSupportedTextField(field) {
-  if (field instanceof HTMLTextAreaElement) return true;
+  if (field instanceof HTMLTextAreaElement) {
+    return (
+      field.getAttribute("role") !== "combobox" &&
+      !field.getAttribute("aria-autocomplete") &&
+      !["listbox", "option"].includes(field.getAttribute("role")) &&
+      field.getAttribute("contenteditable") !== "true"
+    );
+  }
 
   if (!(field instanceof HTMLInputElement)) return false;
+
+  const role = field.getAttribute("role");
+
+  // Avoid custom dropdowns and autocomplete controls, even when
+  // their underlying element is an ordinary text input.
+  if (
+    role === "combobox" ||
+    role === "listbox" ||
+    role === "option" ||
+    field.getAttribute("aria-autocomplete") ||
+    field.getAttribute("aria-haspopup") === "listbox" ||
+    field.getAttribute("contenteditable") === "true"
+  ) {
+    return false;
+  }
 
   return ["text", "email", "tel", "url", "search"].includes(
     field.type.toLowerCase()
@@ -81,24 +103,48 @@ function isEditableEmptyField(field) {
   );
 }
 
+function getAccessibleLabelTexts(field) {
+  const labelTexts = [];
+
+  // Native labels, including <label for="..."> and nested labels.
+  if (field.labels) {
+    for (const label of field.labels) {
+      labelTexts.push(label.textContent || "");
+    }
+  }
+
+  // Explicit accessible name.
+  labelTexts.push(field.getAttribute("aria-label") || "");
+
+  // Accessible name supplied by referenced elements.
+  const labelledBy = field.getAttribute("aria-labelledby") || "";
+
+  for (const id of labelledBy.split(/\s+/).filter(Boolean)) {
+    const referencedElement = document.getElementById(id);
+
+    if (referencedElement) {
+      labelTexts.push(referencedElement.textContent || "");
+    }
+  }
+
+  return labelTexts
+    .map(normaliseLabel)
+    .filter(Boolean);
+}
+
 function getLabelledFields() {
   const fieldsByLabel = new Map();
 
-  for (const label of document.querySelectorAll("label")) {
-    const fieldId = label.getAttribute("for");
-    const field =
-      label.control ||
-      (fieldId ? document.getElementById(fieldId) : null) ||
-      label.querySelector("input, textarea");
+  for (const field of document.querySelectorAll("input, textarea")) {
+    if (!isSupportedTextField(field)) continue;
 
-    if (!field || !isSupportedTextField(field)) continue;
+    const labels = new Set(getAccessibleLabelTexts(field));
 
-    const key = normaliseLabel(label.textContent);
-    if (!key) continue;
-
-    const fields = fieldsByLabel.get(key) || new Set();
-    fields.add(field);
-    fieldsByLabel.set(key, fields);
+    for (const key of labels) {
+      const fields = fieldsByLabel.get(key) || new Set();
+      fields.add(field);
+      fieldsByLabel.set(key, fields);
+    }
   }
 
   return fieldsByLabel;
@@ -110,7 +156,7 @@ function fillCandidateAnswers(candidateAnswers) {
   if (!Array.isArray(candidateAnswers)) return result;
 
   const fieldsByLabel = getLabelledFields();
-  const answersByLabel = new Map();
+  const answerMatches = [];
 
   for (const answer of candidateAnswers) {
     if (
@@ -124,27 +170,55 @@ function fillCandidateAnswers(candidateAnswers) {
       continue;
     }
 
-    const key = normaliseLabel(answer.question_label);
-    if (!key) {
+    const labels = [
+      answer.question_label,
+      ...(Array.isArray(answer.question_aliases)
+        ? answer.question_aliases.filter(
+            (alias) => typeof alias === "string" && alias.trim()
+          )
+        : []),
+    ];
+
+    const matchingFields = new Set();
+
+    // Primary label and approved aliases are all exact-match candidates.
+    // A Set prevents the same field being counted twice for one answer.
+    for (const label of labels) {
+      const key = normaliseLabel(label);
+      if (!key) continue;
+
+      for (const field of fieldsByLabel.get(key) || []) {
+        matchingFields.add(field);
+      }
+    }
+
+    // One saved answer represents one question. If it matches multiple
+    // fields, do not guess which field the user intended.
+    if (matchingFields.size !== 1) {
       result.skipped += 1;
       continue;
     }
 
-    const answers = answersByLabel.get(key) || [];
-    answers.push(answer);
-    answersByLabel.set(key, answers);
+    answerMatches.push({
+      answer,
+      field: [...matchingFields][0],
+    });
   }
 
-  for (const [key, answers] of answersByLabel) {
-    const fields = fieldsByLabel.get(key);
+  const answersByField = new Map();
 
-    // Duplicate answers or duplicate fields make the match ambiguous.
-    if (!fields || fields.size !== 1 || answers.length !== 1) {
-      result.skipped += answers.length;
+  for (const match of answerMatches) {
+    const answers = answersByField.get(match.field) || [];
+    answers.push(match);
+    answersByField.set(match.field, answers);
+  }
+
+  for (const [field, matches] of answersByField) {
+    // Two saved answers targeting one field are ambiguous.
+    if (matches.length !== 1) {
+      result.skipped += matches.length;
       continue;
     }
-
-    const field = [...fields][0];
 
     if (!isEditableEmptyField(field)) {
       result.skipped += 1;
@@ -152,7 +226,7 @@ function fillCandidateAnswers(candidateAnswers) {
     }
 
     // Preserve the exact user-authored snapshot text.
-    field.value = answers[0].answer;
+    field.value = matches[0].answer;
     field.dispatchEvent(new Event("input", { bubbles: true }));
     field.dispatchEvent(new Event("change", { bubbles: true }));
 
