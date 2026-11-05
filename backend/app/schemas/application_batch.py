@@ -12,6 +12,7 @@ BatchStatus = Literal["draft", "approved", "archived"]
 class ApplicationBatchCreate(BaseModel):
     name: str = Field(min_length=1, max_length=150)
     job_ids: list[int] = Field(min_length=1, max_length=100)
+    campaign_id: int | None = None
 
 
 class ApplicationBatchItemSelection(BaseModel):
@@ -34,6 +35,7 @@ class ApplicationBatchRead(BaseModel):
 
     id: int
     name: str
+    campaign_id: int | None
     status: BatchStatus
     approved_at: datetime | None
     created_at: datetime

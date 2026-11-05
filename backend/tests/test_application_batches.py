@@ -81,10 +81,18 @@ def create_saved_job(test_context: dict) -> int:
     return job_id
 
 
-def create_batch(client: TestClient, job_ids: list[int]):
+def create_batch(
+    client: TestClient,
+    job_ids: list[int],
+    campaign_id: int | None = None,
+):
     return client.post(
         "/api/application-batches",
-        json={"name": "Review batch", "job_ids": job_ids},
+        json={
+            "name": "Review batch",
+            "job_ids": job_ids,
+            "campaign_id": campaign_id,
+        },
     )
 
 
@@ -315,3 +323,56 @@ def test_batch_item_must_belong_to_requested_batch(test_context):
     )
 
     assert response.status_code == 404
+
+def test_batch_can_be_attached_to_users_campaign(test_context):
+    client = test_context["client"]
+    job_id = create_saved_job(test_context)
+
+    campaign_response = client.post(
+        "/api/application-campaigns",
+        json={"name": "Backend developer search"},
+    )
+    assert campaign_response.status_code == 201
+    campaign_id = campaign_response.json()["id"]
+
+    response = create_batch(
+        client,
+        [job_id],
+        campaign_id=campaign_id,
+    )
+
+    assert response.status_code == 201
+    assert response.json()["campaign_id"] == campaign_id
+
+
+def test_batch_without_campaign_has_null_campaign_id(test_context):
+    job_id = create_saved_job(test_context)
+
+    response = create_batch(test_context["client"], [job_id])
+
+    assert response.status_code == 201
+    assert response.json()["campaign_id"] is None
+
+
+def test_batch_rejects_another_users_campaign(test_context):
+    client = test_context["client"]
+    current_user = test_context["current_user"]
+
+    campaign_response = client.post(
+        "/api/application-campaigns",
+        json={"name": "Private campaign"},
+    )
+    assert campaign_response.status_code == 201
+    campaign_id = campaign_response.json()["id"]
+
+    current_user["id"] = "user_test_2"
+    job_id = create_saved_job(test_context)
+
+    response = create_batch(
+        client,
+        [job_id],
+        campaign_id=campaign_id,
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Application campaign not found"

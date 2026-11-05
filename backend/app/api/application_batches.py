@@ -9,6 +9,7 @@ from app.core.auth import CurrentUser
 from app.db.dependencies import get_db
 from app.models.application import Application
 from app.models.application_batch import ApplicationBatch, ApplicationBatchItem
+from app.models.application_campaign import ApplicationCampaign
 from app.schemas.application_batch import (
     ApplicationBatchCreate,
     ApplicationBatchItemSelection,
@@ -74,6 +75,19 @@ def create_application_batch(
             detail="Duplicate job IDs are not allowed",
         )
 
+    if payload.campaign_id is not None:
+        campaign = db.scalar(
+            select(ApplicationCampaign.id).where(
+                ApplicationCampaign.id == payload.campaign_id,
+                ApplicationCampaign.user_id == user_id,
+            )
+        )
+        if campaign is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Application campaign not found",
+            )
+
     statement = (
         select(Application.job_id)
         .where(
@@ -95,6 +109,7 @@ def create_application_batch(
 
     batch = ApplicationBatch(
         user_id=user_id,
+        campaign_id=payload.campaign_id,
         name=payload.name.strip(),
     )
 
