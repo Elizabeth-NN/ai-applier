@@ -37,6 +37,7 @@ import {
 import Navbar from "@/components/Navbar";
 import BackendAuthCheck from "@/components/BackendAuthCheck";
 import ApplicationBatches from "@/components/ApplicationBatches";
+import ApplicationCampaigns from "@/components/ApplicationCampaigns";
 import ApplicationExecutions from "@/components/ApplicationExecutions";
 import CoverLetterDrafts from "@/components/CoverLetterDrafts";
 import MyDocuments from "@/components/MyDocuments";
@@ -169,6 +170,7 @@ type PageName =
   | "Reusable Answers"
   | "Cover Letter Drafts"
   | "Applications"
+  | "Application Campaigns"
   | "Application Batches"
   | "Application Executions"
   | "Insights"
@@ -216,6 +218,7 @@ const navGroups: NavGroup[] = [
     heading: "Apply & track",
     items: [
       { page: "Applications", icon: Briefcase },
+      { page: "Application Campaigns", icon: ListChecks },
       { page: "Application Batches", icon: ListChecks },
       { page: "Application Executions", icon: PaperPlaneTilt },
       { page: "Insights", icon: ChartPieSlice },
@@ -261,6 +264,10 @@ const pageMeta: Record<PageName, { title: string; description: string }> = {
   Applications: {
     title: "Applications",
     description: "Move every saved job through your pipeline.",
+  },
+  "Application Campaigns": {
+    title: "Application campaigns",
+    description: "Set application targets, manage campaign timelines, and track confirmed submissions.",
   },
   "Application Batches": {
     title: "Application batches",
@@ -3552,6 +3559,7 @@ const [profileRefreshKey, setProfileRefreshKey] = useState(0);
               )}
 
               {/* ====================== Batches / Executions / Insights ====================== */}
+              {activePage === "Application Campaigns" && <ApplicationCampaigns />}
               {activePage === "Application Batches" && <ApplicationBatches />}
               {activePage === "Application Executions" && (
                 <ApplicationExecutions />
