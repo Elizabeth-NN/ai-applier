@@ -78,11 +78,17 @@ def create_saved_application(
         return application.id
 
 
-def create_draft(client: TestClient, application_id: int, content: str = ""):
-    return client.post(
-        "/api/cover-letter-drafts",
-        json={"application_id": application_id, "content": content},
-    )
+def create_draft(
+    client: TestClient,
+    application_id: int,
+    content: str = "",
+    title: str | None = None,
+):
+    payload = {"application_id": application_id, "content": content}
+    if title is not None:
+        payload["title"] = title
+
+    return client.post("/api/cover-letter-drafts", json=payload)
 
 
 def test_create_draft_for_owned_application(test_context):
@@ -198,6 +204,80 @@ def test_update_rejects_empty_content(test_context):
     response = client.patch(
         f"/api/cover-letter-drafts/{created.json()['id']}",
         json={"content": ""},
+    )
+
+    assert response.status_code == 422
+
+
+
+def test_create_draft_generates_title_from_job_and_company(test_context):
+    client = test_context["client"]
+    application_id = create_saved_application(test_context["db_factory"])
+
+    response = create_draft(client, application_id, "Cover letter content")
+
+    assert response.status_code == 201
+    assert response.json()["title"] == (
+        "Junior Python Developer — Example Company"
+    )
+
+
+def test_create_draft_accepts_and_trims_custom_title(test_context):
+    client = test_context["client"]
+    application_id = create_saved_application(test_context["db_factory"])
+
+    response = create_draft(
+        client,
+        application_id,
+        "Cover letter content",
+        title="  Python Developer  —  Example Company  ",
+    )
+
+    assert response.status_code == 201
+    assert response.json()["title"] == (
+        "Python Developer — Example Company"
+    )
+
+
+def test_owner_can_update_title_without_changing_content(test_context):
+    client = test_context["client"]
+    application_id = create_saved_application(test_context["db_factory"])
+    created = create_draft(client, application_id, "Original content")
+    draft_id = created.json()["id"]
+
+    response = client.patch(
+        f"/api/cover-letter-drafts/{draft_id}",
+        json={"title": "Backend Engineer — Example Company"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["title"] == (
+        "Backend Engineer — Example Company"
+    )
+    assert response.json()["content"] == "Original content"
+
+
+def test_update_rejects_blank_title(test_context):
+    client = test_context["client"]
+    application_id = create_saved_application(test_context["db_factory"])
+    created = create_draft(client, application_id, "Original content")
+
+    response = client.patch(
+        f"/api/cover-letter-drafts/{created.json()['id']}",
+        json={"title": "   "},
+    )
+
+    assert response.status_code == 422
+
+
+def test_update_rejects_empty_payload(test_context):
+    client = test_context["client"]
+    application_id = create_saved_application(test_context["db_factory"])
+    created = create_draft(client, application_id, "Original content")
+
+    response = client.patch(
+        f"/api/cover-letter-drafts/{created.json()['id']}",
+        json={},
     )
 
     assert response.status_code == 422
