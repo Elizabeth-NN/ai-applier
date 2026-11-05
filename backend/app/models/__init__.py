@@ -1,6 +1,7 @@
 from app.models.candidate_profile import CandidateProfile
 from app.models.candidate_answer import CandidateAnswer
 from app.models.application import Application
+from app.models.application_campaign import ApplicationCampaign
 from app.models.application_batch import ApplicationBatch, ApplicationBatchItem
 from app.models.application_execution import ApplicationExecution
 from app.models.cover_letter_draft import CoverLetterDraft
@@ -14,6 +15,7 @@ __all__ = [
     "HimalayasIngestionState",
     "Job",
     "Application",
+    "ApplicationCampaign",
     "ApplicationBatch",
     "ApplicationBatchItem",
     "ApplicationExecution",

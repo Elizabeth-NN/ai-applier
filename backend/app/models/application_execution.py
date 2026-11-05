@@ -48,6 +48,12 @@ class ApplicationExecution(Base):
         index=True,
     )
 
+    campaign_id: Mapped[int | None] = mapped_column(
+        ForeignKey("application_campaigns.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
     batch_item_id: Mapped[int | None] = mapped_column(
         ForeignKey("application_batch_items.id", ondelete="SET NULL"),
         nullable=True,

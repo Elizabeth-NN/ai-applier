@@ -24,6 +24,11 @@ class ApplicationBatch(Base):
         nullable=False,
         index=True,
     )
+    campaign_id: Mapped[int | None] = mapped_column(
+        ForeignKey("application_campaigns.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     name: Mapped[str] = mapped_column(
         String(150),
         nullable=False,
