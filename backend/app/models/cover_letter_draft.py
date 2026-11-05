@@ -20,6 +20,10 @@ class CoverLetterDraft(Base):
         nullable=False,
         index=True,
     )
+    title: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+    )
     content: Mapped[str] = mapped_column(
         Text,
         default="",
