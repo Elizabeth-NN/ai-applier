@@ -6,6 +6,7 @@ from app.core.auth import CurrentUser
 from app.db.dependencies import get_db
 from app.models.application import Application
 from app.models.cover_letter_draft import CoverLetterDraft
+from app.models.job import Job
 from app.schemas.cover_letter_draft import (
     CoverLetterDraftCreate,
     CoverLetterDraftRead,
@@ -42,9 +43,16 @@ def create_cover_letter_draft(
             detail="Application not found",
         )
 
+    job = db.get(Job, application.job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    generated_title = f"{job.title} — {job.company}"[:255]
+
     draft = CoverLetterDraft(
         application_id=application.id,
         user_id=user_id,
+        title=payload.title or generated_title,
         content=payload.content,
     )
     db.add(draft)
@@ -106,7 +114,12 @@ def update_cover_letter_draft(
     if draft is None:
         raise HTTPException(status_code=404, detail="Draft not found")
 
-    draft.content = payload.content
+    if payload.title is not None:
+        draft.title = payload.title
+
+    if payload.content is not None:
+        draft.content = payload.content
+
     db.commit()
     db.refresh(draft)
     return draft
