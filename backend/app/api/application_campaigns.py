@@ -123,6 +123,12 @@ def update_application_campaign(
             detail="Campaign target cannot be null",
         )
 
+    if "status" in changes and changes["status"] is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Campaign status cannot be null",
+        )
+
     starts_on = changes.get("starts_on", campaign.starts_on)
     deadline_on = changes.get("deadline_on", campaign.deadline_on)
 

@@ -9,6 +9,7 @@ class ApplicationExecutionPrepare(BaseModel):
     resume_id: int = Field(gt=0)
     cover_letter_draft_id: int | None = Field(default=None, gt=0)
     batch_item_id: int | None = Field(default=None, gt=0)
+    campaign_id: int | None = Field(default=None, gt=0)
     candidate_answer_ids: list[int] = Field(default_factory=list, max_length=50)
 
     @field_validator("candidate_answer_ids")
@@ -43,6 +44,7 @@ class ApplicationExecutionRead(BaseModel):
 
     id: int
     application_id: int
+    campaign_id: int | None
     batch_item_id: int | None
     resume_id: int | None
     cover_letter_draft_id: int | None

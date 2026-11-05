@@ -1,6 +1,7 @@
 from collections.abc import Generator
 
 import pytest
+from datetime import date, datetime, timedelta, timezone
 from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -8,6 +9,8 @@ from sqlalchemy.pool import StaticPool
 
 from app.db.session import Base
 from app.models.application import Application
+from app.models.application_batch import ApplicationBatch, ApplicationBatchItem
+from app.models.application_campaign import ApplicationCampaign
 from app.models.application_execution import ApplicationExecution
 from app.models.job import Job
 from app.models.resume import Resume
@@ -409,3 +412,145 @@ def test_job_without_application_url_remains_reviewable(
         "https://example.com/jobs/123"
     )
     assert execution.job_snapshot["application_url"] is None
+
+
+def create_campaign(context, *, user_id="user_test_1", name="Test campaign"):
+    with context["factory"]() as db:
+        campaign = ApplicationCampaign(
+            user_id=user_id,
+            name=name,
+            target_applications=500,
+            starts_on=date.today(),
+            deadline_on=date.today() + timedelta(days=56),
+            status="active",
+        )
+        db.add(campaign)
+        db.commit()
+        db.refresh(campaign)
+        return campaign.id
+
+
+def create_approved_batch_item(context, campaign_id):
+    now = datetime.now(timezone.utc)
+
+    with context["factory"]() as db:
+        batch = ApplicationBatch(
+            user_id="user_test_1",
+            campaign_id=campaign_id,
+            name="Approved test batch",
+            status="approved",
+            approved_at=now,
+        )
+        db.add(batch)
+        db.flush()
+
+        item = ApplicationBatchItem(
+            batch_id=batch.id,
+            job_id=context["job_id"],
+            selected=True,
+            approved_at=now,
+        )
+        db.add(item)
+        db.commit()
+        db.refresh(item)
+        return item.id
+
+
+def test_prepare_attaches_explicit_campaign(preparation_context):
+    campaign_id = create_campaign(preparation_context)
+
+    execution = prepare(
+        preparation_context,
+        campaign_id=campaign_id,
+    )
+
+    assert execution.campaign_id == campaign_id
+
+
+def test_prepare_inherits_campaign_from_approved_batch(
+    preparation_context,
+):
+    campaign_id = create_campaign(preparation_context)
+    batch_item_id = create_approved_batch_item(
+        preparation_context,
+        campaign_id,
+    )
+
+    execution = prepare(
+        preparation_context,
+        batch_item_id=batch_item_id,
+    )
+
+    assert execution.batch_item_id == batch_item_id
+    assert execution.campaign_id == campaign_id
+
+
+def test_prepare_rejects_campaign_that_does_not_match_batch(
+    preparation_context,
+):
+    batch_campaign_id = create_campaign(
+        preparation_context,
+        name="Batch campaign",
+    )
+    other_campaign_id = create_campaign(
+        preparation_context,
+        name="Other campaign",
+    )
+    batch_item_id = create_approved_batch_item(
+        preparation_context,
+        batch_campaign_id,
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        prepare(
+            preparation_context,
+            batch_item_id=batch_item_id,
+            campaign_id=other_campaign_id,
+        )
+
+    assert exc.value.status_code == 422
+    assert "match" in exc.value.detail
+
+
+def test_prepare_rejects_campaign_owned_by_another_user(
+    preparation_context,
+):
+    foreign_campaign_id = create_campaign(
+        preparation_context,
+        user_id="another_user",
+        name="Foreign campaign",
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        prepare(
+            preparation_context,
+            campaign_id=foreign_campaign_id,
+        )
+
+    assert exc.value.status_code == 404
+
+
+def test_idempotency_key_rejects_different_campaign(
+    preparation_context,
+):
+    first_campaign_id = create_campaign(
+        preparation_context,
+        name="First campaign",
+    )
+    second_campaign_id = create_campaign(
+        preparation_context,
+        name="Second campaign",
+    )
+
+    prepare(
+        preparation_context,
+        campaign_id=first_campaign_id,
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        prepare(
+            preparation_context,
+            campaign_id=second_campaign_id,
+        )
+
+    assert exc.value.status_code == 409

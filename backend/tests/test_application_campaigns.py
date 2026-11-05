@@ -373,3 +373,21 @@ def test_campaign_progress_does_not_count_other_users_executions(
     assert response.status_code == 200
     assert response.json()["submitted"] == 0
     assert response.json()["remaining"] == 10
+
+
+def test_update_campaign_rejects_null_status(campaign_context):
+    client = campaign_context["client"]
+    created = create_campaign(client)
+    campaign_id = created.json()["id"]
+
+    response = client.patch(
+        f"/api/application-campaigns/{campaign_id}",
+        json={"status": None},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "Campaign status cannot be null"
+
+    unchanged = client.get(f"/api/application-campaigns/{campaign_id}")
+    assert unchanged.status_code == 200
+    assert unchanged.json()["status"] == "draft"

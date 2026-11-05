@@ -1,7 +1,7 @@
 from collections.abc import Generator
 
 import hashlib
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
@@ -14,6 +14,7 @@ from app.db.session import Base
 from app.main import app
 from app.models.application import Application
 from app.models.application_execution import ApplicationExecution
+from app.models.application_campaign import ApplicationCampaign
 from app.models.candidate_answer import CandidateAnswer
 from app.models.job import Job
 from app.models.resume import Resume
@@ -1281,3 +1282,41 @@ def test_extension_handoff_rejects_expired_token(execution_context):
         execution = db.get(ApplicationExecution, execution_id)
         assert execution.extension_handoff_redeemed_at is None
         assert execution.status == "approved"
+
+
+def test_prepare_endpoint_attaches_campaign_to_execution(execution_context):
+    with execution_context["db_factory"]() as db:
+        campaign = ApplicationCampaign(
+            user_id="user_test_1",
+            name="API campaign test",
+            target_applications=500,
+            starts_on=date.today(),
+            deadline_on=date.today() + timedelta(days=56),
+            status="active",
+        )
+        db.add(campaign)
+        db.commit()
+        db.refresh(campaign)
+        campaign_id = campaign.id
+
+    response = execution_context["client"].post(
+        "/api/application-executions/prepare",
+        headers={"Idempotency-Key": "api-campaign-preparation-test"},
+        json={
+            "application_id": execution_context["application_id"],
+            "resume_id": execution_context["resume_id"],
+            "campaign_id": campaign_id,
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.json()["campaign_id"] == campaign_id
+
+    with execution_context["db_factory"]() as db:
+        execution = db.scalar(
+            select(ApplicationExecution).where(
+                ApplicationExecution.id == response.json()["id"]
+            )
+        )
+        assert execution is not None
+        assert execution.campaign_id == campaign_id

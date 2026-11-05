@@ -15,6 +15,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.application import Application
+from app.models.application_campaign import ApplicationCampaign
 from app.models.application_batch import ApplicationBatch, ApplicationBatchItem
 from app.models.candidate_answer import CandidateAnswer
 from app.models.application_execution import ApplicationExecution
@@ -109,6 +110,7 @@ def _existing_execution(
     resume_id: int,
     cover_letter_draft_id: int | None,
     batch_item_id: int | None,
+    campaign_id: int | None,
     candidate_answer_ids: list[int],
 ) -> ApplicationExecution | None:
     """Return an existing matching request, or reject key reuse."""
@@ -127,6 +129,7 @@ def _existing_execution(
         and existing.resume_id == resume_id
         and existing.cover_letter_draft_id == cover_letter_draft_id
         and existing.batch_item_id == batch_item_id
+        and existing.campaign_id == campaign_id
         and sorted(
             (existing.application_payload or {}).get("candidate_answer_ids", [])
         ) == candidate_answer_ids
@@ -150,6 +153,7 @@ def prepare_application_execution(
     idempotency_key: str,
     cover_letter_draft_id: int | None = None,
     batch_item_id: int | None = None,
+    campaign_id: int | None = None,
     candidate_answer_ids: list[int] | None = None,
 ) -> ApplicationExecution:
     """Validate ownership and create a reviewable execution snapshot."""
@@ -162,18 +166,35 @@ def prepare_application_execution(
             detail="Idempotency-Key must contain between 1 and 100 characters.",
         )
 
-    existing = _existing_execution(
-        db,
-        user_id,
-        key,
-        application_id,
-        resume_id,
-        cover_letter_draft_id,
-        batch_item_id,
-        selected_answer_ids,
-    )
-    if existing is not None:
-        return existing
+    # Direct executions have an explicit campaign (or none), so their
+    # idempotency key can be checked before validating other resources.
+    if batch_item_id is None:
+        if campaign_id is not None:
+            campaign = db.scalar(
+                select(ApplicationCampaign).where(
+                    ApplicationCampaign.id == campaign_id,
+                    ApplicationCampaign.user_id == user_id,
+                )
+            )
+            if campaign is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Application campaign not found.",
+                )
+
+        existing = _existing_execution(
+            db,
+            user_id,
+            key,
+            application_id,
+            resume_id,
+            cover_letter_draft_id,
+            batch_item_id,
+            campaign_id,
+            selected_answer_ids,
+        )
+        if existing is not None:
+            return existing
 
     application = db.scalar(
         select(Application).where(
@@ -276,9 +297,11 @@ def prepare_application_execution(
             answers_by_id[answer_id] for answer_id in selected_answer_ids
         ]
 
+    batch_campaign_id = None
+
     if batch_item_id is not None:
-        batch_item = db.scalar(
-            select(ApplicationBatchItem)
+        batch_result = db.execute(
+            select(ApplicationBatchItem, ApplicationBatch.campaign_id)
             .join(
                 ApplicationBatch,
                 ApplicationBatch.id == ApplicationBatchItem.batch_id,
@@ -292,12 +315,67 @@ def prepare_application_execution(
                 ApplicationBatch.status == "approved",
                 ApplicationBatch.approved_at.is_not(None),
             )
-        )
-        if batch_item is None:
+        ).first()
+
+        if batch_result is None:
             raise HTTPException(
                 status_code=422,
                 detail="The batch item must be selected and approved in one of your approved batches.",
             )
+
+        batch_item, batch_campaign_id = batch_result
+
+    if campaign_id is not None:
+        campaign = db.scalar(
+            select(ApplicationCampaign).where(
+                ApplicationCampaign.id == campaign_id,
+                ApplicationCampaign.user_id == user_id,
+            )
+        )
+        if campaign is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Application campaign not found.",
+            )
+
+    if batch_item_id is not None and campaign_id is not None:
+        if batch_campaign_id != campaign_id:
+            raise HTTPException(
+                status_code=422,
+                detail="The selected campaign must match the campaign assigned to the batch.",
+            )
+
+    resolved_campaign_id = (
+        batch_campaign_id if batch_item_id is not None else campaign_id
+    )
+
+    if resolved_campaign_id is not None and campaign_id is None:
+        inherited_campaign = db.scalar(
+            select(ApplicationCampaign).where(
+                ApplicationCampaign.id == resolved_campaign_id,
+                ApplicationCampaign.user_id == user_id,
+            )
+        )
+        if inherited_campaign is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Application campaign not found.",
+            )
+
+    if batch_item_id is not None:
+        existing = _existing_execution(
+            db,
+            user_id,
+            key,
+            application_id,
+            resume_id,
+            cover_letter_draft_id,
+            batch_item_id,
+            resolved_campaign_id,
+            selected_answer_ids,
+        )
+        if existing is not None:
+            return existing
 
     job_snapshot = {
         "id": job.id,
@@ -345,6 +423,7 @@ def prepare_application_execution(
         user_id=user_id,
         application_id=application.id,
         batch_item_id=batch_item_id,
+        campaign_id=resolved_campaign_id,
         resume_id=resume.id,
         cover_letter_draft_id=cover_letter.id if cover_letter else None,
         resume_filename_snapshot=resume.original_filename,
@@ -380,6 +459,7 @@ def prepare_application_execution(
             resume_id,
             cover_letter_draft_id,
             batch_item_id,
+            resolved_campaign_id,
             selected_answer_ids,
         )
         if existing is not None:

@@ -117,6 +117,7 @@ def prepare_execution(
         resume_id=payload.resume_id,
         cover_letter_draft_id=payload.cover_letter_draft_id,
         batch_item_id=payload.batch_item_id,
+        campaign_id=payload.campaign_id,
         candidate_answer_ids=payload.candidate_answer_ids,
         idempotency_key=idempotency_key,
     )
