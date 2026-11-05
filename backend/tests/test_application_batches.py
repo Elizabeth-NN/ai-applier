@@ -12,6 +12,7 @@ from app.db.session import Base
 from app.main import app
 from app.models.application import Application
 from app.models.application_batch import ApplicationBatch, ApplicationBatchItem
+from app.models.application_execution import ApplicationExecution
 from app.models.job import Job
 
 
@@ -376,3 +377,263 @@ def test_batch_rejects_another_users_campaign(test_context):
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Application campaign not found"
+
+
+def test_draft_batch_can_be_renamed(test_context):
+    client = test_context["client"]
+    job_id = create_saved_job(test_context)
+    batch = create_batch(client, [job_id]).json()
+
+    response = client.patch(
+        f"/api/application-batches/{batch['id']}",
+        json={"name": "Monday application session"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["name"] == "Monday application session"
+
+
+def test_batch_rejects_empty_rename_request(test_context):
+    client = test_context["client"]
+    job_id = create_saved_job(test_context)
+    batch = create_batch(client, [job_id]).json()
+
+    response = client.patch(
+        f"/api/application-batches/{batch['id']}",
+        json={},
+    )
+
+    assert response.status_code == 422
+
+
+def test_approved_batch_cannot_be_renamed(test_context):
+    client = test_context["client"]
+    job_id = create_saved_job(test_context)
+    batch = create_batch(client, [job_id]).json()
+
+    item_id = batch["items"][0]["id"]
+    assert client.patch(
+        f"/api/application-batches/{batch['id']}/items/{item_id}",
+        json={"selected": True},
+    ).status_code == 200
+
+    assert client.post(
+        f"/api/application-batches/{batch['id']}/approve"
+    ).status_code == 200
+
+    response = client.patch(
+        f"/api/application-batches/{batch['id']}",
+        json={"name": "Renamed"},
+    )
+
+    assert response.status_code == 409
+
+
+def test_user_cannot_rename_another_users_batch(test_context):
+    client = test_context["client"]
+    current_user = test_context["current_user"]
+    job_id = create_saved_job(test_context)
+    batch = create_batch(client, [job_id]).json()
+
+    current_user["id"] = "user_test_2"
+
+    response = client.patch(
+        f"/api/application-batches/{batch['id']}",
+        json={"name": "Unauthorized rename"},
+    )
+
+    assert response.status_code == 404
+
+
+def test_draft_batch_can_add_saved_jobs(test_context):
+    client = test_context["client"]
+    first_job = create_saved_job(test_context)
+    second_job = create_saved_job(test_context)
+    batch = create_batch(client, [first_job]).json()
+
+    response = client.post(
+        f"/api/application-batches/{batch['id']}/items",
+        json={"job_ids": [second_job]},
+    )
+
+    assert response.status_code == 200
+    items = response.json()["items"]
+    assert {item["job_id"] for item in items} == {first_job, second_job}
+    assert all(item["selected"] is False for item in items)
+
+
+def test_batch_cannot_add_a_job_that_is_already_in_the_session(test_context):
+    client = test_context["client"]
+    job_id = create_saved_job(test_context)
+    batch = create_batch(client, [job_id]).json()
+
+    response = client.post(
+        f"/api/application-batches/{batch['id']}/items",
+        json={"job_ids": [job_id]},
+    )
+
+    assert response.status_code == 409
+
+
+def test_batch_cannot_add_jobs_not_saved_by_current_user(test_context):
+    client = test_context["client"]
+    job_id = create_job(test_context["db_factory"])
+    batch = create_batch(client, [create_saved_job(test_context)]).json()
+
+    response = client.post(
+        f"/api/application-batches/{batch['id']}/items",
+        json={"job_ids": [job_id]},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["job_ids"] == [job_id]
+
+
+def test_approved_batch_cannot_add_jobs(test_context):
+    client = test_context["client"]
+    first_job = create_saved_job(test_context)
+    second_job = create_saved_job(test_context)
+    batch = create_batch(client, [first_job]).json()
+
+    item_id = batch["items"][0]["id"]
+    client.patch(
+        f"/api/application-batches/{batch['id']}/items/{item_id}",
+        json={"selected": True},
+    )
+    client.post(f"/api/application-batches/{batch['id']}/approve")
+
+    response = client.post(
+        f"/api/application-batches/{batch['id']}/items",
+        json={"job_ids": [second_job]},
+    )
+
+    assert response.status_code == 409
+
+
+def test_draft_batch_can_remove_item_without_execution_history(test_context):
+    client = test_context["client"]
+    first_job = create_saved_job(test_context)
+    second_job = create_saved_job(test_context)
+    batch = create_batch(client, [first_job, second_job]).json()
+    item_to_remove = next(
+        item for item in batch["items"]
+        if item["job_id"] == first_job
+    )
+
+    response = client.delete(
+        f"/api/application-batches/{batch['id']}/items/"
+        f"{item_to_remove['id']}"
+    )
+
+    assert response.status_code == 200
+    assert [item["job_id"] for item in response.json()["items"]] == [
+        second_job
+    ]
+
+
+def test_batch_item_with_execution_history_cannot_be_removed(test_context):
+    client = test_context["client"]
+    db_factory = test_context["db_factory"]
+    job_id = create_saved_job(test_context)
+    batch = create_batch(client, [job_id]).json()
+    item_id = batch["items"][0]["id"]
+
+    with db_factory() as db:
+        application = db.scalar(
+            select(Application).where(
+                Application.user_id == "user_test_1",
+                Application.job_id == job_id,
+            )
+        )
+        assert application is not None
+
+        execution = ApplicationExecution(
+            user_id="user_test_1",
+            application_id=application.id,
+            batch_item_id=item_id,
+            resume_filename_snapshot="resume.pdf",
+            resume_sha256="a" * 64,
+            cover_letter_snapshot=None,
+            job_snapshot={"title": "Junior Python Developer"},
+            application_payload={},
+            target_url="https://example.com/apply",
+            idempotency_key="test-batch-item-history",
+        )
+        db.add(execution)
+        db.commit()
+
+    response = client.delete(
+        f"/api/application-batches/{batch['id']}/items/{item_id}"
+    )
+
+    assert response.status_code == 409
+    assert "execution history" in response.json()["detail"]
+
+    with db_factory() as db:
+        item = db.get(ApplicationBatchItem, item_id)
+        execution = db.scalar(
+            select(ApplicationExecution).where(
+                ApplicationExecution.batch_item_id == item_id
+            )
+        )
+        assert item is not None
+        assert execution is not None
+
+
+def test_draft_batch_can_be_archived_only_after_approval(test_context):
+    client = test_context["client"]
+    job_id = create_saved_job(test_context)
+    batch = create_batch(client, [job_id]).json()
+
+    response = client.post(
+        f"/api/application-batches/{batch['id']}/archive"
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == (
+        "Only approved sessions can be archived"
+    )
+
+
+def test_approved_batch_can_be_archived_without_losing_items(test_context):
+    client = test_context["client"]
+    job_id = create_saved_job(test_context)
+    batch = create_batch(client, [job_id]).json()
+    item_id = batch["items"][0]["id"]
+
+    selected = client.patch(
+        f"/api/application-batches/{batch['id']}/items/{item_id}",
+        json={"selected": True},
+    )
+    assert selected.status_code == 200
+
+    approved = client.post(
+        f"/api/application-batches/{batch['id']}/approve"
+    )
+    assert approved.status_code == 200
+
+    archived = client.post(
+        f"/api/application-batches/{batch['id']}/archive"
+    )
+
+    assert archived.status_code == 200
+    result = archived.json()
+    assert result["status"] == "archived"
+    assert len(result["items"]) == 1
+    assert result["items"][0]["id"] == item_id
+    assert result["items"][0]["approved_at"] is not None
+
+
+def test_user_cannot_archive_another_users_batch(test_context):
+    client = test_context["client"]
+    current_user = test_context["current_user"]
+    job_id = create_saved_job(test_context)
+    batch = create_batch(client, [job_id]).json()
+
+    current_user["id"] = "user_test_2"
+
+    response = client.post(
+        f"/api/application-batches/{batch['id']}/archive"
+    )
+
+    assert response.status_code == 404

@@ -1,3 +1,5 @@
+"""API endpoints for managing application sessions (batches)."""
+
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -10,10 +12,13 @@ from app.db.dependencies import get_db
 from app.models.application import Application
 from app.models.application_batch import ApplicationBatch, ApplicationBatchItem
 from app.models.application_campaign import ApplicationCampaign
+from app.models.application_execution import ApplicationExecution
 from app.schemas.application_batch import (
+    ApplicationBatchAddItems,
     ApplicationBatchCreate,
     ApplicationBatchItemSelection,
     ApplicationBatchRead,
+    ApplicationBatchUpdate,
 )
 
 
@@ -170,6 +175,94 @@ def get_application_batch(
 
 
 @router.patch(
+    "/{batch_id}",
+    response_model=ApplicationBatchRead,
+)
+def update_application_batch(
+    batch_id: int,
+    payload: ApplicationBatchUpdate,
+    user_id: CurrentUser,
+    db: Session = Depends(get_db),
+):
+    batch = _get_owned_batch(db, batch_id, user_id)
+    _ensure_draft(batch)
+
+    if not payload.model_fields_set:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Provide a session name to update",
+        )
+
+    if payload.name is not None:
+        batch.name = payload.name
+
+    db.commit()
+    return _get_owned_batch(db, batch_id, user_id)
+
+
+@router.post(
+    "/{batch_id}/items",
+    response_model=ApplicationBatchRead,
+    status_code=status.HTTP_200_OK,
+)
+def add_application_batch_items(
+    batch_id: int,
+    payload: ApplicationBatchAddItems,
+    user_id: CurrentUser,
+    db: Session = Depends(get_db),
+):
+    batch = _get_owned_batch(db, batch_id, user_id)
+    _ensure_draft(batch)
+
+    existing_job_ids = {item.job_id for item in batch.items}
+    duplicate_job_ids = sorted(existing_job_ids.intersection(payload.job_ids))
+
+    if duplicate_job_ids:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": "Some jobs are already in this session",
+                "job_ids": duplicate_job_ids,
+            },
+        )
+
+    saved_job_ids = set(
+        db.scalars(
+            select(Application.job_id).where(
+                Application.user_id == user_id,
+                Application.job_id.in_(payload.job_ids),
+            )
+        ).all()
+    )
+
+    missing_job_ids = sorted(set(payload.job_ids) - saved_job_ids)
+    if missing_job_ids:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "message": "Every job must already be saved by you",
+                "job_ids": missing_job_ids,
+            },
+        )
+
+    batch.items.extend(
+        ApplicationBatchItem(job_id=job_id, selected=False)
+        for job_id in payload.job_ids
+    )
+
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Could not add the jobs to this session",
+        )
+
+    return _get_owned_batch(db, batch_id, user_id)
+
+
+@router.patch(
     "/{batch_id}/items/{item_id}",
     response_model=ApplicationBatchRead,
 )
@@ -194,6 +287,50 @@ def update_application_batch_item(
         )
 
     item.selected = payload.selected
+    db.commit()
+
+    return _get_owned_batch(db, batch_id, user_id)
+
+
+@router.delete(
+    "/{batch_id}/items/{item_id}",
+    response_model=ApplicationBatchRead,
+)
+def remove_application_batch_item(
+    batch_id: int,
+    item_id: int,
+    user_id: CurrentUser,
+    db: Session = Depends(get_db),
+):
+    batch = _get_owned_batch(db, batch_id, user_id)
+    _ensure_draft(batch)
+
+    item = next(
+        (item for item in batch.items if item.id == item_id),
+        None,
+    )
+    if item is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Batch item not found",
+        )
+
+    execution_id = db.scalar(
+        select(ApplicationExecution.id).where(
+            ApplicationExecution.batch_item_id == item.id
+        ).limit(1)
+    )
+
+    if execution_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "This job has execution history and cannot be removed "
+                "from the session"
+            ),
+        )
+
+    batch.items.remove(item)
     db.commit()
 
     return _get_owned_batch(db, batch_id, user_id)
@@ -225,6 +362,29 @@ def approve_application_batch(
     for item in selected_items:
         item.approved_at = approved_at
 
+    db.commit()
+
+    return _get_owned_batch(db, batch_id, user_id)
+
+
+@router.post(
+    "/{batch_id}/archive",
+    response_model=ApplicationBatchRead,
+)
+def archive_application_batch(
+    batch_id: int,
+    user_id: CurrentUser,
+    db: Session = Depends(get_db),
+):
+    batch = _get_owned_batch(db, batch_id, user_id)
+
+    if batch.status != "approved":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only approved sessions can be archived",
+        )
+
+    batch.status = "archived"
     db.commit()
 
     return _get_owned_batch(db, batch_id, user_id)
