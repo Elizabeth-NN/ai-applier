@@ -13,6 +13,7 @@ from app.services.automation_queue import (
     enqueue_automation_task,
     claim_next_task,
     complete_automation_task,
+    renew_automation_task_lease,
     fail_automation_task,
     recover_expired_tasks,
 )
@@ -635,3 +636,124 @@ def test_recover_expired_tasks_validates_settings(
             batch_size=batch_size,
             retry_delay_seconds=retry_delay,
         )
+
+
+def test_renew_task_lease_extends_active_lease(db):
+    run, _ = create_run(db)
+    task, _ = enqueue_automation_task(
+        db,
+        run_id=run.id,
+        user_id="user-1",
+        task_type="screen_jobs",
+        idempotency_key="renew-1",
+    )
+
+    now = datetime.now(timezone.utc)
+    claim_next_task(
+        db,
+        worker_id="worker-1",
+        lease_seconds=60,
+        now=now,
+    )
+
+    renewed = renew_automation_task_lease(
+        db,
+        task_id=task.id,
+        worker_id="worker-1",
+        lease_seconds=180,
+        now=now + timedelta(seconds=30),
+    )
+
+    expected = (now + timedelta(seconds=210)).replace(tzinfo=None)
+    assert renewed.locked_until.replace(tzinfo=None) == expected
+    assert renewed.status == "running"
+    assert renewed.locked_by == "worker-1"
+
+
+def test_renew_task_lease_rejects_expired_lease(db):
+    run, _ = create_run(db)
+    task, _ = enqueue_automation_task(
+        db,
+        run_id=run.id,
+        user_id="user-1",
+        task_type="screen_jobs",
+        idempotency_key="renew-expired",
+    )
+
+    now = datetime.now(timezone.utc)
+    claim_next_task(
+        db,
+        worker_id="worker-1",
+        lease_seconds=10,
+        now=now,
+    )
+
+    with pytest.raises(ValueError, match="lease has expired"):
+        renew_automation_task_lease(
+            db,
+            task_id=task.id,
+            worker_id="worker-1",
+            now=now + timedelta(seconds=11),
+        )
+
+
+def test_complete_task_rejects_expired_lease(db):
+    run, _ = create_run(db)
+    task, _ = enqueue_automation_task(
+        db,
+        run_id=run.id,
+        user_id="user-1",
+        task_type="screen_jobs",
+        idempotency_key="complete-expired",
+    )
+
+    now = datetime.now(timezone.utc)
+    claim_next_task(
+        db,
+        worker_id="worker-1",
+        lease_seconds=10,
+        now=now,
+    )
+
+    with pytest.raises(ValueError, match="lease has expired"):
+        complete_automation_task(
+            db,
+            task_id=task.id,
+            worker_id="worker-1",
+            now=now + timedelta(seconds=11),
+        )
+
+    db.refresh(task)
+    assert task.status == "running"
+
+
+def test_fail_task_rejects_expired_lease(db):
+    run, _ = create_run(db)
+    task, _ = enqueue_automation_task(
+        db,
+        run_id=run.id,
+        user_id="user-1",
+        task_type="screen_jobs",
+        idempotency_key="fail-expired",
+    )
+
+    now = datetime.now(timezone.utc)
+    claim_next_task(
+        db,
+        worker_id="worker-1",
+        lease_seconds=10,
+        now=now,
+    )
+
+    with pytest.raises(ValueError, match="lease has expired"):
+        fail_automation_task(
+            db,
+            task_id=task.id,
+            worker_id="worker-1",
+            error="Late failure",
+            now=now + timedelta(seconds=11),
+        )
+
+    db.refresh(task)
+    assert task.status == "running"
+

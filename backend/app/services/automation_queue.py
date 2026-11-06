@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import select
@@ -211,6 +211,65 @@ def claim_next_task(
         raise
 
 
+
+def _utc_datetime(value: datetime) -> datetime:
+    """Normalize SQLite and PostgreSQL datetimes for UTC comparisons."""
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def renew_automation_task_lease(
+    db: Session,
+    *,
+    task_id: int,
+    worker_id: str,
+    lease_seconds: int = 300,
+    now: datetime | None = None,
+) -> AutomationTask:
+    """Extend an active task lease owned by this worker."""
+
+    if not worker_id.strip():
+        raise ValueError("worker_id cannot be empty.")
+
+    if lease_seconds < 1:
+        raise ValueError("lease_seconds must be at least 1.")
+
+    renewed_at = now or datetime.now(timezone.utc)
+
+    try:
+        task = db.scalar(
+            select(AutomationTask)
+            .where(AutomationTask.id == task_id)
+            .with_for_update()
+        )
+
+        if task is None:
+            raise ValueError("Automation task does not exist.")
+
+        if task.status != "running":
+            raise ValueError("Only running tasks can renew a lease.")
+
+        if task.locked_by != worker_id:
+            raise ValueError("Worker does not own this task.")
+
+        if (
+            task.locked_until is None
+            or _utc_datetime(task.locked_until) <= _utc_datetime(renewed_at)
+        ):
+            raise ValueError("Worker lease has expired.")
+
+        task.locked_until = renewed_at + timedelta(seconds=lease_seconds)
+
+        db.commit()
+        db.refresh(task)
+        return task
+
+    except Exception:
+        db.rollback()
+        raise
+
+
 def complete_automation_task(
     db: Session,
     *,
@@ -243,6 +302,12 @@ def complete_automation_task(
 
         if task.locked_by != worker_id:
             raise ValueError("Worker does not own this task.")
+
+        if (
+            task.locked_until is None
+            or _utc_datetime(task.locked_until) <= _utc_datetime(completed_at)
+        ):
+            raise ValueError("Worker lease has expired.")
 
         task.status = "succeeded"
         task.result = result
@@ -298,6 +363,12 @@ def fail_automation_task(
 
         if task.locked_by != worker_id:
             raise ValueError("Worker does not own this task.")
+
+        if (
+            task.locked_until is None
+            or _utc_datetime(task.locked_until) <= _utc_datetime(failed_at)
+        ):
+            raise ValueError("Worker lease has expired.")
 
         task.last_error = error.strip()[:4000]
         task.locked_by = None

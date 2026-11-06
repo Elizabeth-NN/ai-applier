@@ -189,3 +189,87 @@ def test_same_job_can_have_result_in_a_later_run(db):
         .result["recommendation"]
         == "prioritize"
     )
+
+
+def test_save_screening_results_checks_run_and_resume_ownership(db):
+    from app.services.automation_screening import save_screening_results
+
+    run, resume, job = create_records(db)
+
+    with pytest.raises(ValueError, match="ownership"):
+        save_screening_results(
+            db,
+            run_id=run.id,
+            user_id="user-2",
+            resume_id=resume.id,
+            results=[{"id": job.id, "recommendation": "review"}],
+        )
+
+    with pytest.raises(ValueError, match="Resume"):
+        save_screening_results(
+            db,
+            run_id=run.id,
+            user_id="user-1",
+            resume_id=999,
+            results=[{"id": job.id, "recommendation": "review"}],
+        )
+
+    assert db.query(AutomationScreeningResult).count() == 0
+
+
+def test_save_screening_results_rejects_duplicate_and_missing_jobs(db):
+    from app.services.automation_screening import save_screening_results
+
+    run, resume, job = create_records(db)
+
+    with pytest.raises(ValueError, match="duplicate"):
+        save_screening_results(
+            db,
+            run_id=run.id,
+            user_id="user-1",
+            resume_id=resume.id,
+            results=[
+                {"id": job.id, "recommendation": "review"},
+                {"id": job.id, "recommendation": "prioritize"},
+            ],
+        )
+
+    with pytest.raises(ValueError, match="missing jobs"):
+        save_screening_results(
+            db,
+            run_id=run.id,
+            user_id="user-1",
+            resume_id=resume.id,
+            results=[{"id": 999, "recommendation": "review"}],
+        )
+
+    assert db.query(AutomationScreeningResult).count() == 0
+
+
+def test_save_screening_results_is_idempotent_for_existing_run_job(db):
+    from app.services.automation_screening import save_screening_results
+
+    run, resume, job = create_records(db)
+
+    first = {"id": job.id, "recommendation": "review"}
+    updated = {"id": job.id, "recommendation": "prioritize"}
+
+    assert save_screening_results(
+        db,
+        run_id=run.id,
+        user_id="user-1",
+        resume_id=resume.id,
+        results=[first],
+    ) == 1
+
+    assert save_screening_results(
+        db,
+        run_id=run.id,
+        user_id="user-1",
+        resume_id=resume.id,
+        results=[updated],
+    ) == 1
+
+    stored = db.query(AutomationScreeningResult).one()
+    assert stored.result == updated
+    assert db.query(AutomationScreeningResult).count() == 1
