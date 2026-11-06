@@ -118,10 +118,34 @@ type ResumeJobMatch = ApiJob & {
   profile_match_reasons: string[];
 };
 
+type ResumeJobScreening = ResumeJobMatch & {
+  recommendation: "prioritize" | "review" | "exclude";
+  role_alignment: "aligned" | "partial" | "weak";
+  role_relevance_score: number;
+  role_relevance_reasons: string[];
+  experience_level:
+    | "internship"
+    | "entry-level"
+    | "junior"
+    | "mid-level"
+    | "senior"
+    | "unknown";
+  experience_fit: "aligned" | "mismatch" | "unknown";
+  remote_fit: "aligned" | "mismatch" | "unknown" | "not_specified";
+  employment_fit: "aligned" | "mismatch" | "unknown" | "not_specified";
+  kenya_eligibility:
+    | "eligible"
+    | "ineligible"
+    | "conflicting_evidence"
+    | "unknown";
+  listing_status: "active" | "closed" | "unknown";
+  reasons: string[];
+};
+
 type ResumeJobMatchResult = {
   resume_id: number;
   resume_filename: string;
-  items: ResumeJobMatch[];
+  items: ResumeJobScreening[];
   total: number;
   skip: number;
   limit: number;
@@ -1081,7 +1105,7 @@ function ResumeMatchCard({
   onSave,
   onMarkApplied,
 }: {
-  match: ResumeJobMatch;
+  match: ResumeJobScreening;
   application: ApiApplication | undefined;
   saving: boolean;
   onSave: () => void;
@@ -1129,6 +1153,105 @@ function ResumeMatchCard({
             </div>
           )}
         </div>
+      </div>
+
+      <div className="mt-4 rounded-xl border border-violet-100 bg-violet-50/40 p-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <p className="text-xs font-bold tracking-wide text-violet-700 uppercase">
+              Candidate screening
+            </p>
+            <p className="mt-1 text-sm font-semibold text-slate-900">
+              {match.recommendation === "prioritize"
+                ? "Prioritize this role"
+                : match.recommendation === "exclude"
+                  ? "Exclude from your shortlist"
+                  : "Review before shortlisting"}
+            </p>
+          </div>
+          <span
+            className={`rounded-full px-3 py-1 text-xs font-semibold ${
+              match.recommendation === "prioritize"
+                ? "bg-emerald-100 text-emerald-800"
+                : match.recommendation === "exclude"
+                  ? "bg-rose-100 text-rose-800"
+                  : "bg-amber-100 text-amber-800"
+            }`}
+          >
+            {match.recommendation}
+          </span>
+        </div>
+
+        <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <div>
+            <p className="text-xs text-slate-500">Role relevance</p>
+            <p className="text-sm font-semibold text-slate-800">
+              {match.role_relevance_score}/100 · {match.role_alignment}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-slate-500">Experience</p>
+            <p className="text-sm font-semibold capitalize text-slate-800">
+              {match.experience_level.replaceAll("-", " ")} · {match.experience_fit}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-slate-500">Remote-work fit</p>
+            <p className="text-sm font-semibold capitalize text-slate-800">
+              {match.remote_fit.replaceAll("_", " ")}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-slate-500">Employment-type fit</p>
+            <p className="text-sm font-semibold capitalize text-slate-800">
+              {match.employment_fit.replaceAll("_", " ")}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-slate-500">Kenya eligibility</p>
+            <p className="text-sm font-semibold capitalize text-slate-800">
+              {match.kenya_eligibility.replaceAll("_", " ")}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-slate-500">Listing status</p>
+            <p className="text-sm font-semibold capitalize text-slate-800">
+              {match.listing_status}
+            </p>
+          </div>
+        </div>
+
+        {match.reasons.length > 0 && (
+          <div className="mt-3 border-t border-violet-100 pt-3">
+            <p className="text-xs font-bold text-slate-700">
+              Screening reasons
+            </p>
+            <ul className="mt-1 space-y-1 text-sm text-slate-600">
+              {match.reasons.map((reason, index) => (
+                <li key={`${index}-${reason}`}>{reason}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {match.role_relevance_reasons.length > 0 && (
+          <div className="mt-3">
+            <p className="text-xs font-bold text-slate-700">
+              Role relevance details
+            </p>
+            <ul className="mt-1 space-y-1 text-sm text-slate-600">
+              {match.role_relevance_reasons.map((reason, index) => (
+                <li key={`${index}-${reason}`}>{reason}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        <p className="mt-3 text-xs text-slate-500">
+          Screening is guidance based on your resume, candidate profile, and
+          available job data. Unknown or conflicting information needs
+          verification; this is not a prediction of hiring success.
+        </p>
       </div>
 
       {match.match_reasons.length > 0 && (
@@ -2123,7 +2246,7 @@ const [profileRefreshKey, setProfileRefreshKey] = useState(0);
       });
 
       const result = await apiRequest<ResumeJobMatchResult>(
-        `/api/jobs/matches?${params.toString()}`,
+        `/api/jobs/screen?${params.toString()}`,
         token,
       );
 
@@ -2131,7 +2254,7 @@ const [profileRefreshKey, setProfileRefreshKey] = useState(0);
       setResumeMatchNotice(
         result.total === 0
           ? "No jobs are available to match yet."
-          : `Matched ${result.total} jobs against ${result.resume_filename}.`,
+          : `Screened ${result.total} jobs against ${result.resume_filename}.`,
       );
     } catch (err) {
       setResumeMatchError(

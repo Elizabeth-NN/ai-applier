@@ -32,6 +32,7 @@ from app.schemas.job import (
     JobRead,
     JobSearchResult,
     ResumeJobMatchResult,
+    JobScreeningResult,
 )
 from app.schemas.himalayas_ingestion import HimalayasBatchIngestionResult
 from app.services.job_ingestion import (
@@ -45,6 +46,7 @@ from app.services.job_relevance import (
     classify_experience_level,
     score_job_relevance,
 )
+from app.services.job_screening import screen_job
 
 
 router = APIRouter(prefix="/api/jobs", tags=["Jobs"])
@@ -627,6 +629,60 @@ def match_jobs_to_resume(
         "total": len(scored),
         "skip": skip,
         "limit": limit,
+    }
+
+
+@router.get("/screen", response_model=JobScreeningResult)
+def screen_jobs_for_candidate(
+    user_id: CurrentUser,
+    resume_id: int = Query(..., ge=1),
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=20, ge=1, le=100),
+    db: Session = Depends(get_db),
+):
+    """Return ranked resume matches with candidate-specific screening."""
+    # Reuse the existing authenticated matching flow. This also verifies
+    # resume ownership and preserves its ranking and pagination behavior.
+    match_result = match_jobs_to_resume(
+        user_id=user_id,
+        resume_id=resume_id,
+        skip=skip,
+        limit=limit,
+        db=db,
+    )
+
+    # Only this user's target roles and work preferences affect screening.
+    candidate_profile = db.scalar(
+        select(CandidateProfile).where(
+            CandidateProfile.user_id == user_id
+        )
+    )
+
+    profile_data = (
+        {
+            "target_roles": candidate_profile.target_roles,
+            "work_preferences": candidate_profile.work_preferences,
+        }
+        if candidate_profile is not None
+        else {}
+    )
+
+    screened_items = []
+    for item in match_result["items"]:
+        screening = screen_job(
+            job=item,
+            profile=profile_data,
+            match=item,
+        )
+        screened_items.append({**item, **screening})
+
+    return {
+        "resume_id": match_result["resume_id"],
+        "resume_filename": match_result["resume_filename"],
+        "items": screened_items,
+        "total": match_result["total"],
+        "skip": match_result["skip"],
+        "limit": match_result["limit"],
     }
 
 

@@ -127,6 +127,59 @@ class ResumeJobMatchResult(BaseModel):
     limit: int
 
 
+class JobScreeningItem(ResumeJobMatchItem):
+    """A personalized job match with conservative screening results."""
+
+    recommendation: Literal["prioritize", "review", "exclude"]
+    role_alignment: Literal["aligned", "partial", "weak"]
+    role_relevance_score: int = Field(ge=0, le=100)
+    role_relevance_reasons: list[str] = Field(default_factory=list)
+
+    experience_level: Literal[
+        "internship",
+        "entry-level",
+        "junior",
+        "mid-level",
+        "senior",
+        "unknown",
+    ]
+    experience_fit: Literal["aligned", "mismatch", "unknown"]
+
+    remote_fit: Literal[
+        "aligned",
+        "mismatch",
+        "unknown",
+        "not_specified",
+    ]
+    employment_fit: Literal[
+        "aligned",
+        "mismatch",
+        "unknown",
+        "not_specified",
+    ]
+
+    kenya_eligibility: Literal[
+        "eligible",
+        "ineligible",
+        "conflicting_evidence",
+        "unknown",
+    ]
+    listing_status: Literal["active", "closed", "unknown"]
+
+    reasons: list[str] = Field(default_factory=list)
+
+
+class JobScreeningResult(BaseModel):
+    """Paginated personalized job matches with screening recommendations."""
+
+    resume_id: int
+    resume_filename: str
+    items: list[JobScreeningItem]
+    total: int
+    skip: int
+    limit: int
+
+
 class EligibilityVerificationRequest(BaseModel):
     """Evidence-backed verification of a job's eligibility in Kenya."""
 

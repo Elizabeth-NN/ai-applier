@@ -453,3 +453,192 @@ Bachelor of Science in Software Engineering.
     assert evidence["kubernetes"] == []
     assert evidence["docker"] == ["projects"]
     assert evidence["aws"] == []
+
+
+def test_screen_prioritizes_eligible_active_junior_remote_role(match_context):
+    resume_id = create_resume(match_context)
+    create_candidate_profile(
+        match_context,
+        target_roles=["Python"],
+        work_preferences={
+            "remote": True,
+            "employment_type": ["full-time"],
+        },
+    )
+    job_id = create_job(
+        match_context,
+        title="Junior Python Developer",
+        description=(
+            "Entry-level Python developer building APIs with "
+            "FastAPI, PostgreSQL and Docker."
+        ),
+        eligibility_status="eligible",
+        listing_status="active",
+    )
+
+    response = match_context["client"].get(
+        f"/api/jobs/screen?resume_id={resume_id}"
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["total"] == 1
+
+    item = body["items"][0]
+    assert item["id"] == job_id
+    assert item["recommendation"] == "prioritize"
+    assert item["role_alignment"] == "aligned"
+    assert item["experience_fit"] == "aligned"
+    assert item["remote_fit"] == "aligned"
+    assert item["employment_fit"] == "aligned"
+    assert item["kenya_eligibility"] == "eligible"
+    assert item["listing_status"] == "active"
+
+    # The screening response retains the existing match evidence.
+    assert isinstance(item["match_score"], int)
+    assert item["matched_terms"]
+    assert "storage_key" not in item
+
+
+def test_screen_reviews_unknown_kenya_eligibility(match_context):
+    resume_id = create_resume(match_context)
+    create_candidate_profile(
+        match_context,
+        target_roles=["Python"],
+        work_preferences={"remote": True},
+    )
+    create_job(
+        match_context,
+        title="Junior Python Developer",
+        description="Build Python APIs with FastAPI and PostgreSQL.",
+        eligibility_status="unknown",
+        listing_status="active",
+    )
+
+    response = match_context["client"].get(
+        f"/api/jobs/screen?resume_id={resume_id}"
+    )
+
+    assert response.status_code == 200, response.text
+    item = response.json()["items"][0]
+    assert item["recommendation"] == "review"
+    assert item["kenya_eligibility"] == "unknown"
+    assert any("Kenya" in reason for reason in item["reasons"])
+
+
+@pytest.mark.parametrize(
+    ("eligibility_status", "listing_status"),
+    [
+        ("ineligible", "active"),
+        ("eligible", "closed"),
+    ],
+)
+def test_screen_excludes_confirmed_disqualifiers(
+    match_context,
+    eligibility_status,
+    listing_status,
+):
+    resume_id = create_resume(match_context)
+    create_candidate_profile(
+        match_context,
+        target_roles=["Python"],
+        work_preferences={"remote": True},
+    )
+    create_job(
+        match_context,
+        title="Junior Python Developer",
+        description="Build Python APIs with FastAPI and PostgreSQL.",
+        eligibility_status=eligibility_status,
+        listing_status=listing_status,
+    )
+
+    response = match_context["client"].get(
+        f"/api/jobs/screen?resume_id={resume_id}"
+    )
+
+    assert response.status_code == 200, response.text
+    item = response.json()["items"][0]
+    assert item["recommendation"] == "exclude"
+
+    if eligibility_status == "ineligible":
+        assert item["kenya_eligibility"] == "ineligible"
+    if listing_status == "closed":
+        assert item["listing_status"] == "closed"
+
+
+def test_screen_uses_only_authenticated_users_profile(match_context):
+    resume_id = create_resume(match_context)
+    create_candidate_profile(
+        match_context,
+        user_id="different_user",
+        target_roles=["Python"],
+        work_preferences={
+            "remote": True,
+            "employment_type": ["full-time"],
+        },
+    )
+    create_job(
+        match_context,
+        title="Junior Python Developer",
+        description="Build Python APIs with FastAPI and PostgreSQL.",
+        eligibility_status="eligible",
+        listing_status="active",
+    )
+
+    response = match_context["client"].get(
+        f"/api/jobs/screen?resume_id={resume_id}"
+    )
+
+    assert response.status_code == 200, response.text
+    item = response.json()["items"][0]
+
+    # The other user's preferences must not leak into this screening result.
+    assert item["remote_fit"] == "not_specified"
+    assert item["employment_fit"] == "not_specified"
+
+
+def test_screen_rejects_another_users_resume(match_context):
+    resume_id = create_resume(match_context)
+    match_context["user"]["id"] = "different_user"
+
+    response = match_context["client"].get(
+        f"/api/jobs/screen?resume_id={resume_id}"
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Resume not found"
+
+
+def test_screen_preserves_pagination(match_context):
+    resume_id = create_resume(match_context)
+    first_id = create_job(
+        match_context,
+        title="Junior Python Developer",
+        description="Build Python APIs with FastAPI and PostgreSQL.",
+        eligibility_status="eligible",
+    )
+    second_id = create_job(
+        match_context,
+        title="Garden Maintenance Specialist",
+        description="Prune hedges and maintain ornamental gardens outdoors.",
+        eligibility_status="unknown",
+    )
+
+    first_page = match_context["client"].get(
+        f"/api/jobs/screen?resume_id={resume_id}&skip=0&limit=1"
+    )
+    second_page = match_context["client"].get(
+        f"/api/jobs/screen?resume_id={resume_id}&skip=1&limit=1"
+    )
+
+    assert first_page.status_code == 200, first_page.text
+    assert second_page.status_code == 200, second_page.text
+
+    assert first_page.json()["total"] == 2
+    assert first_page.json()["skip"] == 0
+    assert first_page.json()["limit"] == 1
+    assert len(first_page.json()["items"]) == 1
+    assert len(second_page.json()["items"]) == 1
+
+    assert first_page.json()["items"][0]["id"] == first_id
+    assert second_page.json()["items"][0]["id"] == second_id
