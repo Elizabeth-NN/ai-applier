@@ -94,6 +94,23 @@ type ApplicationBatch = {
   items: BatchItem[];
 };
 
+type BatchPreparationItemResult = {
+  batch_item_id: number;
+  job_id: number;
+  status: "prepared" | "skipped" | "failed";
+  execution_id: number | null;
+  execution_status: string | null;
+  reason: string | null;
+};
+
+type BatchPreparationResult = {
+  batch_id: number;
+  prepared_count: number;
+  skipped_count: number;
+  failed_count: number;
+  items: BatchPreparationItemResult[];
+};
+
 async function apiRequest<T>(
   path: string,
   token: string,
@@ -214,6 +231,9 @@ export default function ApplicationBatches() {
   const [preparationDraftId, setPreparationDraftId] = useState("");
   const [preparationAnswerIds, setPreparationAnswerIds] = useState<number[]>([]);
   const [preparingItemId, setPreparingItemId] = useState<number | null>(null);
+  const [preparingBatch, setPreparingBatch] = useState(false);
+  const [batchPreparationResult, setBatchPreparationResult] =
+    useState<BatchPreparationResult | null>(null);
   const preparationIdempotency = useRef<{
     signature: string;
     key: string;
@@ -376,6 +396,77 @@ export default function ApplicationBatches() {
     setBatches((current) =>
       current.map((batch) => batch.id === updated.id ? updated : batch),
     );
+  }
+
+  async function prepareApprovedBatch() {
+    if (
+      !activeBatch ||
+      activeBatch.status !== "approved" ||
+      preparingBatch ||
+      preparingItemId !== null
+    ) {
+      return;
+    }
+
+    const selectedCount = activeBatch.items.filter(
+      (item) => item.selected && item.approved_at !== null,
+    ).length;
+
+    if (selectedCount === 0) {
+      setError("This session has no selected, approved jobs to prepare.");
+      return;
+    }
+
+    if (!preparationResumeId) {
+      setError("Upload or select a resume before preparing this session.");
+      return;
+    }
+
+    setError("");
+    setNotice("");
+    setPreparingBatch(true);
+    setBatchPreparationResult(null);
+
+    try {
+      const token = await getToken();
+      if (!token) throw new Error("Please sign in again.");
+
+      const result = await apiRequest<BatchPreparationResult>(
+        `/api/application-batches/${activeBatch.id}/prepare`,
+        token,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            resume_id: Number(preparationResumeId),
+            candidate_answer_ids: [...preparationAnswerIds].sort(
+              (a, b) => a - b,
+            ),
+          }),
+        },
+      );
+
+      setBatchPreparationResult(result);
+
+      const refreshedExecutions = await apiRequest<ApplicationExecution[]>(
+        "/api/application-executions?limit=100",
+        token,
+      );
+      setExecutions(refreshedExecutions);
+
+      setNotice(
+        `Batch preparation finished: ${result.prepared_count} prepared, ` +
+        `${result.skipped_count} skipped, ${result.failed_count} failed. ` +
+        "Review prepared snapshots in Application Executions.",
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Could not prepare this application session.",
+      );
+    } finally {
+      setPreparingBatch(false);
+    }
   }
 
   async function prepareSessionItem(item: BatchItem) {
@@ -963,6 +1054,106 @@ export default function ApplicationBatches() {
               <p className="mt-2 text-xs text-slate-500">
                 Approved {new Date(activeBatch.approved_at).toLocaleString()}
               </p>
+            )}
+
+            {activeBatch.status === "approved" && (
+              <div className="mt-5 rounded-xl border border-violet-200 bg-violet-50/50 p-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <h4 className="text-sm font-bold text-slate-800">
+                      Prepare selected jobs
+                    </h4>
+                    <p className="mt-1 text-xs text-slate-600">
+                      Prepare independent snapshots for all selected, approved
+                      jobs using the selected resume and approved answers.
+                      Every snapshot remains awaiting human review.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void prepareApprovedBatch()}
+                    disabled={
+                      preparingBatch ||
+                      preparingItemId !== null ||
+                      !preparationResumeId ||
+                      !activeBatch.items.some(
+                        (item) => item.selected && item.approved_at !== null,
+                      )
+                    }
+                    className="shrink-0 rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {preparingBatch ? "Preparing jobs..." : "Prepare selected jobs"}
+                  </button>
+                </div>
+
+                {!preparationResumeId && (
+                  <p className="mt-2 text-xs text-amber-800">
+                    Upload a resume before preparing this session.
+                  </p>
+                )}
+
+                {batchPreparationResult?.batch_id === activeBatch.id && (
+                  <div className="mt-4 border-t border-violet-200 pt-3">
+                    <div className="grid grid-cols-3 gap-2">
+                      <ProgressCount
+                        label="Prepared"
+                        value={batchPreparationResult.prepared_count}
+                      />
+                      <ProgressCount
+                        label="Skipped"
+                        value={batchPreparationResult.skipped_count}
+                      />
+                      <ProgressCount
+                        label="Failed"
+                        value={batchPreparationResult.failed_count}
+                      />
+                    </div>
+
+                    <div className="mt-3 space-y-2">
+                      {batchPreparationResult.items.map((itemResult) => {
+                        const batchItem = activeBatch.items.find(
+                          (item) => item.id === itemResult.batch_item_id,
+                        );
+
+                        return (
+                          <div
+                            key={itemResult.batch_item_id}
+                            className="rounded-lg border border-slate-200 bg-white p-3 text-xs"
+                          >
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <span className="font-semibold text-slate-800">
+                                {batchItem?.job.title ?? `Job #${itemResult.job_id}`}
+                              </span>
+                              <span className={`rounded-full px-2 py-1 font-semibold ${
+                                itemResult.status === "prepared"
+                                  ? "bg-blue-100 text-blue-700"
+                                  : itemResult.status === "skipped"
+                                    ? "bg-slate-100 text-slate-700"
+                                    : "bg-red-100 text-red-700"
+                              }`}>
+                                {itemResult.status}
+                              </span>
+                            </div>
+                            {itemResult.execution_id !== null && (
+                              <p className="mt-1 text-slate-500">
+                                Execution #{itemResult.execution_id}
+                                {itemResult.execution_status
+                                  ? ` · ${itemResult.execution_status}`
+                                  : ""}
+                              </p>
+                            )}
+                            {itemResult.reason && (
+                              <p className="mt-1 text-slate-600">
+                                {itemResult.reason}
+                              </p>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
             )}
 
             {sessionProgress && activeBatch.status !== "draft" && (

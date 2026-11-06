@@ -14,10 +14,12 @@ from app.models.application import Application
 from app.models.application_batch import ApplicationBatch, ApplicationBatchItem
 from app.models.application_execution import ApplicationExecution
 from app.models.job import Job
+from app.models.resume import Resume
+import app.services.application_preparation as preparation
 
 
 @pytest.fixture
-def test_context() -> Generator[dict, None, None]:
+def test_context(tmp_path, monkeypatch) -> Generator[dict, None, None]:
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
@@ -30,6 +32,36 @@ def test_context() -> Generator[dict, None, None]:
     )
 
     Base.metadata.create_all(bind=engine)
+
+    storage = tmp_path / "private_uploads"
+    storage.mkdir()
+    resume_bytes = b"test resume contents"
+    (storage / "resume-test.pdf").write_bytes(resume_bytes)
+
+    monkeypatch.setattr(
+        preparation,
+        "_resume_storage_dir",
+        lambda: storage,
+    )
+    monkeypatch.setattr(
+        preparation,
+        "extract_resume_text",
+        lambda path, filename: "A sufficiently long extracted resume text.",
+    )
+
+    with testing_session_local() as db:
+        resume = Resume(
+            user_id="user_test_1",
+            original_filename="resume-test.pdf",
+            storage_key="resume-test.pdf",
+            content_type="application/pdf",
+            size_bytes=len(resume_bytes),
+        )
+        db.add(resume)
+        db.commit()
+        db.refresh(resume)
+        resume_id = resume.id
+
     current_user = {"id": "user_test_1"}
 
     def override_get_db():
@@ -48,6 +80,7 @@ def test_context() -> Generator[dict, None, None]:
                 "client": client,
                 "db_factory": testing_session_local,
                 "current_user": current_user,
+                "resume_id": resume_id,
             }
     finally:
         app.dependency_overrides.clear()
@@ -61,6 +94,7 @@ def create_job(db_factory: sessionmaker[Session]) -> int:
             title="Junior Python Developer",
             company="Example Company",
             location="Remote",
+            source_url="https://example.com/jobs/junior-python-developer",
         )
         db.add(job)
         db.commit()
@@ -637,3 +671,102 @@ def test_user_cannot_archive_another_users_batch(test_context):
     )
 
     assert response.status_code == 404
+
+
+def approve_selected_items(client, batch):
+    for item in batch["items"]:
+        response = client.patch(
+            f"/api/application-batches/{batch['id']}/items/{item['id']}",
+            json={"selected": True},
+        )
+        assert response.status_code == 200
+
+    response = client.post(
+        f"/api/application-batches/{batch['id']}/approve"
+    )
+    assert response.status_code == 200
+    return response.json()
+
+
+def test_prepare_batch_creates_reviewable_executions(test_context):
+    client = test_context["client"]
+    first_job = create_saved_job(test_context)
+    second_job = create_saved_job(test_context)
+
+    created = create_batch(client, [first_job, second_job])
+    assert created.status_code == 201
+
+    approved = approve_selected_items(client, created.json())
+
+    response = client.post(
+        f"/api/application-batches/{approved['id']}/prepare",
+        json={"resume_id": test_context["resume_id"]},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["batch_id"] == approved["id"]
+    assert body["prepared_count"] == 2
+    assert body["skipped_count"] == 0
+    assert body["failed_count"] == 0
+    assert len(body["items"]) == 2
+    assert all(item["status"] == "prepared" for item in body["items"])
+
+    with test_context["db_factory"]() as db:
+        executions = db.scalars(
+            select(ApplicationExecution).order_by(ApplicationExecution.id)
+        ).all()
+
+        assert len(executions) == 2
+        assert all(execution.status == "prepared" for execution in executions)
+        assert all(execution.approved_at is None for execution in executions)
+        assert all(execution.submitted_at is None for execution in executions)
+        assert {
+            execution.batch_item_id for execution in executions
+        } == {
+            item["id"] for item in approved["items"]
+        }
+
+
+def test_prepare_batch_rejects_unapproved_batch(test_context):
+    client = test_context["client"]
+    job_id = create_saved_job(test_context)
+    created = create_batch(client, [job_id])
+
+    response = client.post(
+        f"/api/application-batches/{created.json()['id']}/prepare",
+        json={"resume_id": test_context["resume_id"]},
+    )
+
+    assert response.status_code == 409
+
+
+def test_prepare_batch_skips_items_with_existing_execution(test_context):
+    client = test_context["client"]
+    job_id = create_saved_job(test_context)
+
+    created = create_batch(client, [job_id])
+    approved = approve_selected_items(client, created.json())
+    endpoint = f"/api/application-batches/{approved['id']}/prepare"
+    payload = {"resume_id": test_context["resume_id"]}
+
+    first = client.post(endpoint, json=payload)
+    assert first.status_code == 200
+    assert first.json()["prepared_count"] == 1
+
+    second = client.post(endpoint, json=payload)
+
+    assert second.status_code == 200
+    body = second.json()
+    assert body["prepared_count"] == 0
+    assert body["skipped_count"] == 1
+    assert body["failed_count"] == 0
+    assert body["items"][0]["status"] == "skipped"
+    assert body["items"][0]["reason"] == (
+        "An execution already exists for this batch item."
+    )
+    assert body["items"][0]["execution_status"] == "prepared"
+
+    with test_context["db_factory"]() as db:
+        executions = db.scalars(select(ApplicationExecution)).all()
+        assert len(executions) == 1
