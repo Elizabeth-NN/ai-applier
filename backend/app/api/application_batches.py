@@ -447,10 +447,10 @@ def prepare_application_batch(
             results.append({
                 "batch_item_id": item.id,
                 "job_id": item.job_id,
-                "status": "skipped",
+                "status": "already_prepared",
                 "execution_id": existing_execution.id,
                 "execution_status": existing_execution.status,
-                "reason": "An execution already exists for this batch item.",
+                "reason": "An execution already exists; no duplicate snapshot was created.",
             })
             continue
 
@@ -488,8 +488,8 @@ def prepare_application_batch(
     prepared_count = sum(
         result["status"] == "prepared" for result in results
     )
-    skipped_count = sum(
-        result["status"] == "skipped" for result in results
+    already_prepared_count = sum(
+        result["status"] == "already_prepared" for result in results
     )
     failed_count = sum(
         result["status"] == "failed" for result in results
@@ -498,7 +498,7 @@ def prepare_application_batch(
     return {
         "batch_id": batch.id,
         "prepared_count": prepared_count,
-        "skipped_count": skipped_count,
+        "already_prepared_count": already_prepared_count,
         "failed_count": failed_count,
         "items": results,
     }

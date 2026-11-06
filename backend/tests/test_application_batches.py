@@ -707,7 +707,7 @@ def test_prepare_batch_creates_reviewable_executions(test_context):
     body = response.json()
     assert body["batch_id"] == approved["id"]
     assert body["prepared_count"] == 2
-    assert body["skipped_count"] == 0
+    assert body["already_prepared_count"] == 0
     assert body["failed_count"] == 0
     assert len(body["items"]) == 2
     assert all(item["status"] == "prepared" for item in body["items"])
@@ -759,11 +759,11 @@ def test_prepare_batch_skips_items_with_existing_execution(test_context):
     assert second.status_code == 200
     body = second.json()
     assert body["prepared_count"] == 0
-    assert body["skipped_count"] == 1
+    assert body["already_prepared_count"] == 1
     assert body["failed_count"] == 0
-    assert body["items"][0]["status"] == "skipped"
+    assert body["items"][0]["status"] == "already_prepared"
     assert body["items"][0]["reason"] == (
-        "An execution already exists for this batch item."
+        "An execution already exists; no duplicate snapshot was created."
     )
     assert body["items"][0]["execution_status"] == "prepared"
 

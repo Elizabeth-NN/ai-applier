@@ -3560,7 +3560,11 @@ const [profileRefreshKey, setProfileRefreshKey] = useState(0);
 
               {/* ====================== Batches / Executions / Insights ====================== */}
               {activePage === "Application Campaigns" && <ApplicationCampaigns />}
-              {activePage === "Application Batches" && <ApplicationBatches />}
+              {activePage === "Application Batches" && (
+                <ApplicationBatches
+                  onOpenExecutions={() => goTo("Application Executions")}
+                />
+              )}
               {activePage === "Application Executions" && (
                 <ApplicationExecutions />
               )}

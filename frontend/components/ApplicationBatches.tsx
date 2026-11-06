@@ -97,7 +97,7 @@ type ApplicationBatch = {
 type BatchPreparationItemResult = {
   batch_item_id: number;
   job_id: number;
-  status: "prepared" | "skipped" | "failed";
+  status: "prepared" | "already_prepared" | "failed";
   execution_id: number | null;
   execution_status: string | null;
   reason: string | null;
@@ -106,7 +106,7 @@ type BatchPreparationItemResult = {
 type BatchPreparationResult = {
   batch_id: number;
   prepared_count: number;
-  skipped_count: number;
+  already_prepared_count: number;
   failed_count: number;
   items: BatchPreparationItemResult[];
 };
@@ -206,7 +206,11 @@ function latestExecutions(
   return latest;
 }
 
-export default function ApplicationBatches() {
+type Props = {
+  onOpenExecutions?: () => void;
+};
+
+export default function ApplicationBatches({ onOpenExecutions }: Props) {
   const { isLoaded, isSignedIn, getToken } = useAuth();
 
   const [applications, setApplications] = useState<ApiApplication[]>([]);
@@ -455,7 +459,8 @@ export default function ApplicationBatches() {
 
       setNotice(
         `Batch preparation finished: ${result.prepared_count} prepared, ` +
-        `${result.skipped_count} skipped, ${result.failed_count} failed. ` +
+        `${result.already_prepared_count} already prepared, ` +
+        `${result.failed_count} failed. ` +
         "Review prepared snapshots in Application Executions.",
       );
     } catch (err) {
@@ -1064,9 +1069,9 @@ export default function ApplicationBatches() {
                       Prepare selected jobs
                     </h4>
                     <p className="mt-1 text-xs text-slate-600">
-                      Prepare independent snapshots for all selected, approved
-                      jobs using the selected resume and approved answers.
-                      Every snapshot remains awaiting human review.
+                      Only selected, approved jobs are included. Existing
+                      executions are recognised rather than duplicated.
+                      New snapshots still require your review and approval.
                     </p>
                   </div>
                   <button
@@ -1100,8 +1105,8 @@ export default function ApplicationBatches() {
                         value={batchPreparationResult.prepared_count}
                       />
                       <ProgressCount
-                        label="Skipped"
-                        value={batchPreparationResult.skipped_count}
+                        label="Already prepared"
+                        value={batchPreparationResult.already_prepared_count}
                       />
                       <ProgressCount
                         label="Failed"
@@ -1127,20 +1132,29 @@ export default function ApplicationBatches() {
                               <span className={`rounded-full px-2 py-1 font-semibold ${
                                 itemResult.status === "prepared"
                                   ? "bg-blue-100 text-blue-700"
-                                  : itemResult.status === "skipped"
+                                  : itemResult.status === "already_prepared"
                                     ? "bg-slate-100 text-slate-700"
                                     : "bg-red-100 text-red-700"
                               }`}>
-                                {itemResult.status}
+                                {itemResult.status === "already_prepared"
+                                  ? "Already prepared"
+                                  : itemResult.status === "prepared"
+                                    ? "Newly prepared"
+                                    : "Failed"}
                               </span>
                             </div>
                             {itemResult.execution_id !== null && (
-                              <p className="mt-1 text-slate-500">
-                                Execution #{itemResult.execution_id}
+                              <button
+                                type="button"
+                                onClick={onOpenExecutions}
+                                disabled={!onOpenExecutions}
+                                className="mt-1 text-left font-medium text-violet-700 underline decoration-violet-300 underline-offset-2 hover:text-violet-900 disabled:cursor-default disabled:no-underline disabled:opacity-70"
+                              >
+                                View execution #{itemResult.execution_id}
                                 {itemResult.execution_status
                                   ? ` · ${itemResult.execution_status}`
                                   : ""}
-                              </p>
+                              </button>
                             )}
                             {itemResult.reason && (
                               <p className="mt-1 text-slate-600">
@@ -1158,9 +1172,9 @@ export default function ApplicationBatches() {
 
             {sessionProgress && activeBatch.status !== "draft" && (
               <div className="mt-5 rounded-xl bg-slate-50 p-4">
-                <h4 className="text-sm font-bold text-slate-800">Execution progress</h4>
+                <h4 className="text-sm font-bold text-slate-800">Session execution status</h4>
                 <p className="mt-1 text-xs text-slate-500">
-                  Counts are derived from the latest execution for each selected job.
+                  Counts reflect the latest execution associated with each selected job.
                 </p>
                 <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
                   <ProgressCount label="Submitted" value={sessionProgress.submitted} />

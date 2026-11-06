@@ -97,7 +97,7 @@ class ApplicationBatchPrepare(BaseModel):
 class ApplicationBatchPrepareItemResult(BaseModel):
     batch_item_id: int
     job_id: int
-    status: Literal["prepared", "skipped", "failed"]
+    status: Literal["prepared", "already_prepared", "failed"]
     execution_id: int | None = None
     execution_status: str | None = None
     reason: str | None = None
@@ -106,7 +106,7 @@ class ApplicationBatchPrepareItemResult(BaseModel):
 class ApplicationBatchPrepareRead(BaseModel):
     batch_id: int
     prepared_count: int
-    skipped_count: int
+    already_prepared_count: int
     failed_count: int
     items: list[ApplicationBatchPrepareItemResult]
 
