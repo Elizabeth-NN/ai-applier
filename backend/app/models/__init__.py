@@ -1,3 +1,5 @@
+from app.models.automation_task import AutomationTask
+from app.models.automation_run import AutomationRun
 from app.models.candidate_profile import CandidateProfile
 from app.models.candidate_answer import CandidateAnswer
 from app.models.application import Application
@@ -10,6 +12,8 @@ from app.models.job import Job
 from app.models.resume import Resume
 
 __all__ = [
+    "AutomationRun",
+    "AutomationTask",
     "CandidateProfile",
     "CandidateAnswer",
     "HimalayasIngestionState",

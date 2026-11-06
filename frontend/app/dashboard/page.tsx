@@ -1658,6 +1658,15 @@ const [profileRefreshKey, setProfileRefreshKey] = useState(0);
       const result = await apiRequest<ApiResume[]>("/api/resumes", token);
       setResumes(result);
 
+      const selectedResumeStillExists =
+        selectedResumeId &&
+        result.some((resume) => String(resume.id) === selectedResumeId);
+
+      if (!selectedResumeStillExists) {
+        setResumeMatches(null);
+        setResumeMatchNotice("");
+      }
+
       setSelectedResumeId((current) => {
         if (current && result.some((resume) => String(resume.id) === current)) {
           return current;
@@ -1671,7 +1680,7 @@ const [profileRefreshKey, setProfileRefreshKey] = useState(0);
     } finally {
       setResumesLoading(false);
     }
-  }, [getToken]);
+  }, [getToken, selectedResumeId]);
 
   /** The single way to change pages: clears stale messages and refreshes what the next page needs. */
   const goTo = useCallback(
@@ -2233,7 +2242,6 @@ const [profileRefreshKey, setProfileRefreshKey] = useState(0);
     setMatchingLoading(true);
     setResumeMatchError("");
     setResumeMatchNotice("");
-    setResumeMatches(null);
 
     try {
       const token = await getToken();
@@ -2257,10 +2265,15 @@ const [profileRefreshKey, setProfileRefreshKey] = useState(0);
           : `Screened ${result.items.length} of ${result.total} matching jobs against ${result.resume_filename}.`,
       );
     } catch (err) {
-      setResumeMatchError(
+      const message =
         err instanceof Error
           ? err.message
-          : "Could not match jobs to your resume.",
+          : "Could not match jobs to your resume.";
+
+      setResumeMatchError(
+        resumeMatches
+          ? `${message} Your previous results are still displayed.`
+          : message,
       );
     } finally {
       setMatchingLoading(false);
@@ -3202,7 +3215,9 @@ const [profileRefreshKey, setProfileRefreshKey] = useState(0);
                           setResumeMatchError("");
                           setResumeMatchNotice("");
                         }}
-                        disabled={resumesLoading || resumes.length === 0}
+                        disabled={
+                          resumesLoading || matchingLoading || resumes.length === 0
+                        }
                         className="w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm"
                       >
                         <option value="">
@@ -3234,7 +3249,7 @@ const [profileRefreshKey, setProfileRefreshKey] = useState(0);
                     <button
                       type="button"
                       onClick={() => void loadResumes()}
-                      disabled={resumesLoading}
+                      disabled={resumesLoading || matchingLoading}
                       className="rounded-xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
                     >
                       Refresh resumes
@@ -3269,11 +3284,20 @@ const [profileRefreshKey, setProfileRefreshKey] = useState(0);
                     </p>
                   )}
 
+                  {matchingLoading && resumeMatches && (
+                    <p role="status" className="text-sm text-slate-600">
+                      Refreshing screening results. Your previous results remain
+                      visible until the update completes.
+                    </p>
+                  )}
+
                   {resumeMatches && (
                     <div className="space-y-4">
                       <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-4">
                         <h3 className="font-bold text-slate-900">
-                          Resume match results
+                          {matchingLoading
+                            ? "Previous resume match results"
+                            : "Resume match results"}
                         </h3>
                         <span className="text-sm text-slate-500">
                           {resumeMatches.items.length} of {resumeMatches.total} jobs screened
