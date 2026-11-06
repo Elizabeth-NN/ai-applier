@@ -1,3 +1,4 @@
+
 from datetime import datetime
 from typing import Literal
 
@@ -53,6 +54,61 @@ class ApplicationBatchAddItems(BaseModel):
 
 class ApplicationBatchItemSelection(BaseModel):
     selected: bool
+
+
+class ApplicationBatchPrepare(BaseModel):
+    resume_id: int = Field(gt=0)
+    cover_letter_draft_ids: dict[int, int] = Field(
+        default_factory=dict,
+        max_length=100,
+    )
+    candidate_answer_ids: list[int] = Field(
+        default_factory=list,
+        max_length=50,
+    )
+
+    @field_validator("cover_letter_draft_ids")
+    @classmethod
+    def validate_cover_letter_ids(
+        cls,
+        value: dict[int, int],
+    ) -> dict[int, int]:
+        if any(item_id <= 0 or draft_id <= 0
+               for item_id, draft_id in value.items()):
+            raise ValueError("Batch item and cover letter IDs must be positive.")
+
+        return value
+
+    @field_validator("candidate_answer_ids")
+    @classmethod
+    def validate_candidate_answer_ids(
+        cls,
+        value: list[int],
+    ) -> list[int]:
+        if any(answer_id <= 0 for answer_id in value):
+            raise ValueError("Candidate answer IDs must be positive.")
+
+        if len(value) != len(set(value)):
+            raise ValueError("Duplicate candidate answer IDs are not allowed.")
+
+        return value
+
+
+class ApplicationBatchPrepareItemResult(BaseModel):
+    batch_item_id: int
+    job_id: int
+    status: Literal["prepared", "skipped", "failed"]
+    execution_id: int | None = None
+    execution_status: str | None = None
+    reason: str | None = None
+
+
+class ApplicationBatchPrepareRead(BaseModel):
+    batch_id: int
+    prepared_count: int
+    skipped_count: int
+    failed_count: int
+    items: list[ApplicationBatchPrepareItemResult]
 
 
 class ApplicationBatchItemRead(BaseModel):

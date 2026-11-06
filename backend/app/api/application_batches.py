@@ -15,11 +15,15 @@ from app.models.application_campaign import ApplicationCampaign
 from app.models.application_execution import ApplicationExecution
 from app.schemas.application_batch import (
     ApplicationBatchAddItems,
+    ApplicationBatchPrepare,
+    ApplicationBatchPrepareRead,
     ApplicationBatchCreate,
     ApplicationBatchItemSelection,
     ApplicationBatchRead,
     ApplicationBatchUpdate,
 )
+
+from app.services.application_preparation import prepare_application_execution
 
 
 router = APIRouter(
@@ -365,6 +369,139 @@ def approve_application_batch(
     db.commit()
 
     return _get_owned_batch(db, batch_id, user_id)
+
+
+@router.post(
+    "/{batch_id}/prepare",
+    response_model=ApplicationBatchPrepareRead,
+)
+def prepare_application_batch(
+    batch_id: int,
+    payload: ApplicationBatchPrepare,
+    user_id: CurrentUser,
+    db: Session = Depends(get_db),
+):
+    """Prepare selected, approved batch items for individual human review."""
+    batch = _get_owned_batch(db, batch_id, user_id)
+
+    if batch.status != "approved" or batch.approved_at is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only approved batches can be prepared",
+        )
+
+    selected_items = [
+        item
+        for item in batch.items
+        if item.selected and item.approved_at is not None
+    ]
+
+    if not selected_items:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="This batch has no selected, approved items to prepare",
+        )
+
+    selected_item_ids = {item.id for item in selected_items}
+    unknown_item_ids = (
+        set(payload.cover_letter_draft_ids) - selected_item_ids
+    )
+    if unknown_item_ids:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                "Cover letter selections must belong to selected batch items"
+            ),
+        )
+
+    results = []
+
+    for item in selected_items:
+        application = db.scalar(
+            select(Application).where(
+                Application.user_id == user_id,
+                Application.job_id == item.job_id,
+            )
+        )
+
+        if application is None:
+            results.append({
+                "batch_item_id": item.id,
+                "job_id": item.job_id,
+                "status": "failed",
+                "reason": "No saved application exists for this job.",
+            })
+            continue
+
+        existing_execution = db.scalar(
+            select(ApplicationExecution)
+            .where(
+                ApplicationExecution.user_id == user_id,
+                ApplicationExecution.batch_item_id == item.id,
+            )
+            .order_by(ApplicationExecution.created_at.desc())
+            .limit(1)
+        )
+
+        if existing_execution is not None:
+            results.append({
+                "batch_item_id": item.id,
+                "job_id": item.job_id,
+                "status": "skipped",
+                "execution_id": existing_execution.id,
+                "execution_status": existing_execution.status,
+                "reason": "An execution already exists for this batch item.",
+            })
+            continue
+
+        try:
+            execution = prepare_application_execution(
+                db,
+                user_id=user_id,
+                application_id=application.id,
+                resume_id=payload.resume_id,
+                cover_letter_draft_id=payload.cover_letter_draft_ids.get(
+                    item.id
+                ),
+                batch_item_id=item.id,
+                campaign_id=batch.campaign_id,
+                candidate_answer_ids=payload.candidate_answer_ids,
+                idempotency_key=f"batch-{batch.id}-item-{item.id}",
+            )
+        except HTTPException as exc:
+            results.append({
+                "batch_item_id": item.id,
+                "job_id": item.job_id,
+                "status": "failed",
+                "reason": str(exc.detail),
+            })
+            continue
+
+        results.append({
+            "batch_item_id": item.id,
+            "job_id": item.job_id,
+            "status": "prepared",
+            "execution_id": execution.id,
+            "execution_status": execution.status,
+        })
+
+    prepared_count = sum(
+        result["status"] == "prepared" for result in results
+    )
+    skipped_count = sum(
+        result["status"] == "skipped" for result in results
+    )
+    failed_count = sum(
+        result["status"] == "failed" for result in results
+    )
+
+    return {
+        "batch_id": batch.id,
+        "prepared_count": prepared_count,
+        "skipped_count": skipped_count,
+        "failed_count": failed_count,
+        "items": results,
+    }
 
 
 @router.post(
