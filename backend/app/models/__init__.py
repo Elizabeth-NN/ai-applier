@@ -1,3 +1,4 @@
+from app.models.automation_screening_result import AutomationScreeningResult
 from app.models.automation_task import AutomationTask
 from app.models.automation_run import AutomationRun
 from app.models.candidate_profile import CandidateProfile
@@ -12,6 +13,7 @@ from app.models.job import Job
 from app.models.resume import Resume
 
 __all__ = [
+    "AutomationScreeningResult",
     "AutomationRun",
     "AutomationTask",
     "CandidateProfile",
