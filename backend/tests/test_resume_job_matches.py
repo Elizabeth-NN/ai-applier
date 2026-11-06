@@ -646,3 +646,146 @@ def test_screen_preserves_pagination(match_context):
 
     assert first_page.json()["items"][0]["id"] == first_id
     assert second_page.json()["items"][0]["id"] == second_id
+
+
+def test_matching_reuses_cached_scores_but_returns_fresh_job_metadata(
+    match_context,
+    monkeypatch,
+):
+    resume_id = create_resume(match_context)
+    job_id = create_job(
+        match_context,
+        title="Python FastAPI Developer",
+        description="Build APIs with Python and FastAPI.",
+        eligibility_status="eligible",
+    )
+
+    extraction_calls = 0
+    scoring_calls = 0
+
+    original_extract = jobs_api.extract_resume_text
+    original_score = jobs_api.score_resume_job_match
+
+    def counted_extract(*args, **kwargs):
+        nonlocal extraction_calls
+        extraction_calls += 1
+        return original_extract(*args, **kwargs)
+
+    def counted_score(*args, **kwargs):
+        nonlocal scoring_calls
+        scoring_calls += 1
+        return original_score(*args, **kwargs)
+
+    monkeypatch.setattr(jobs_api, "extract_resume_text", counted_extract)
+    monkeypatch.setattr(jobs_api, "score_resume_job_match", counted_score)
+
+    url = f"/api/jobs/matches?resume_id={resume_id}"
+
+    first_response = match_context["client"].get(url)
+    assert first_response.status_code == 200, first_response.text
+
+    first_item = first_response.json()["items"][0]
+    first_score = first_item["match_score"]
+
+    assert extraction_calls == 1
+    assert scoring_calls == 1
+
+    # These fields are not part of the matching fingerprint. They must
+    # nevertheless be loaded fresh when a cached score is reused.
+    with match_context["factory"]() as db:
+        job = db.get(Job, job_id)
+        job.listing_status = "closed"
+        job.eligibility_status = "ineligible"
+        db.commit()
+
+    second_response = match_context["client"].get(url)
+    assert second_response.status_code == 200, second_response.text
+
+    second_item = second_response.json()["items"][0]
+
+    assert second_item["match_score"] == first_score
+    assert second_item["listing_status"] == "closed"
+    assert second_item["eligibility_status"] == "ineligible"
+
+    # The second request reused the expensive scoring result.
+    assert extraction_calls == 1
+    assert scoring_calls == 1
+
+
+def test_job_description_change_invalidates_cached_match_results(
+    match_context,
+    monkeypatch,
+):
+    resume_id = create_resume(match_context)
+    job_id = create_job(
+        match_context,
+        title="Python Developer",
+        description="Build APIs with Python.",
+    )
+
+    scoring_calls = 0
+    original_score = jobs_api.score_resume_job_match
+
+    def counted_score(*args, **kwargs):
+        nonlocal scoring_calls
+        scoring_calls += 1
+        return original_score(*args, **kwargs)
+
+    monkeypatch.setattr(jobs_api, "score_resume_job_match", counted_score)
+
+    url = f"/api/jobs/matches?resume_id={resume_id}"
+
+    first_response = match_context["client"].get(url)
+    assert first_response.status_code == 200, first_response.text
+    assert scoring_calls == 1
+
+    with match_context["factory"]() as db:
+        job = db.get(Job, job_id)
+        job.description = (
+            "Build APIs with Python, FastAPI, PostgreSQL and Docker."
+        )
+        db.commit()
+
+    second_response = match_context["client"].get(url)
+    assert second_response.status_code == 200, second_response.text
+
+    # A changed matching-relevant job field produces a new corpus fingerprint.
+    assert scoring_calls == 2
+
+
+def test_resume_file_change_invalidates_cached_match_results(
+    match_context,
+    monkeypatch,
+):
+    resume_id = create_resume(match_context)
+
+    create_job(
+        match_context,
+        title="Python Developer",
+        description="Build APIs with Python and FastAPI.",
+    )
+
+    scoring_calls = 0
+    original_score = jobs_api.score_resume_job_match
+
+    def counted_score(*args, **kwargs):
+        nonlocal scoring_calls
+        scoring_calls += 1
+        return original_score(*args, **kwargs)
+
+    monkeypatch.setattr(jobs_api, "score_resume_job_match", counted_score)
+
+    url = f"/api/jobs/matches?resume_id={resume_id}"
+
+    first_response = match_context["client"].get(url)
+    assert first_response.status_code == 200, first_response.text
+    assert scoring_calls == 1
+
+    resume_path = match_context["storage"] / "resume-user_test_1.pdf"
+    resume_path.write_bytes(b"updated resume contents")
+
+    second_response = match_context["client"].get(url)
+    assert second_response.status_code == 200, second_response.text
+
+    # The file hash changes even though the resume database ID is unchanged.
+    assert scoring_calls == 2
