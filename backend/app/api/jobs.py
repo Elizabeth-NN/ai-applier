@@ -1,5 +1,9 @@
+import copy
+import hashlib
+import json
 import threading
 import time
+from collections import OrderedDict
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -59,13 +63,47 @@ _TERM_WEIGHT_TTL_SECONDS = 600
 _term_weight_cache: dict = {"key": None, "expires_at": 0.0, "weights": {}}
 _term_weight_lock = threading.Lock()
 
+# Completed match results are user-specific and more expensive to rebuild.
+# Keep this cache small and short-lived; screening metadata is never cached.
+_MATCH_RESULT_TTL_SECONDS = 300
+_MATCH_RESULT_CACHE_MAX_ENTRIES = 8
+_match_result_cache: OrderedDict = OrderedDict()
+_match_result_lock = threading.Lock()
 
-def _corpus_term_weights(job_rows) -> dict[str, float]:
-    """Return cached corpus term weights, rebuilding them when stale."""
-    corpus_key = (
-        len(job_rows),
-        max((row.created_at for row in job_rows), default=None),
+
+def _stable_fingerprint(value) -> str:
+    """Create a deterministic fingerprint for JSON-compatible input data."""
+    encoded = json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _job_corpus_fingerprint(job_rows) -> str:
+    """Fingerprint every field that affects matching or ranking."""
+    return _stable_fingerprint(
+        [
+            (
+                row.id,
+                row.title,
+                row.company,
+                row.description,
+                row.created_at.isoformat() if row.created_at else None,
+            )
+            for row in job_rows
+        ]
     )
+
+
+def _corpus_term_weights(
+    job_rows,
+    corpus_fingerprint: str | None = None,
+) -> dict[str, float]:
+    """Return cached corpus term weights, rebuilding them when stale."""
+    corpus_key = corpus_fingerprint or _job_corpus_fingerprint(job_rows)
     now = time.monotonic()
 
     with _term_weight_lock:
@@ -86,6 +124,38 @@ def _corpus_term_weights(job_rows) -> dict[str, float]:
         _term_weight_cache["weights"] = weights
 
     return weights
+
+
+def _get_cached_match_results(cache_key):
+    """Return a safe copy of cached results, refreshing their LRU position."""
+    now = time.monotonic()
+
+    with _match_result_lock:
+        cached = _match_result_cache.get(cache_key)
+        if cached is None:
+            return None
+
+        expires_at, results = cached
+        if now >= expires_at:
+            del _match_result_cache[cache_key]
+            return None
+
+        _match_result_cache.move_to_end(cache_key)
+        return copy.deepcopy(results)
+
+
+def _store_cached_match_results(cache_key, results) -> None:
+    """Store plain, user-scoped match data in the bounded process cache."""
+    with _match_result_lock:
+        _match_result_cache[cache_key] = (
+            time.monotonic() + _MATCH_RESULT_TTL_SECONDS,
+            copy.deepcopy(results),
+        )
+        _match_result_cache.move_to_end(cache_key)
+
+        while len(_match_result_cache) > _MATCH_RESULT_CACHE_MAX_ENTRIES:
+            _match_result_cache.popitem(last=False)
+
 
 def _invalidate_corpus_term_weights() -> None:
     """Invalidate cached weights after matching-relevant job changes."""
@@ -109,6 +179,7 @@ def create_job(
     db.add(job)
     db.commit()
     db.refresh(job)
+    _invalidate_corpus_term_weights()
 
     return job
 
@@ -449,50 +520,34 @@ def match_jobs_to_resume(
             detail="Resume file not found",
         )
 
-    resume_text = extract_resume_text(
-        stored_path,
-        resume.original_filename,
-    )
+    # Read the current matching inputs before checking the cache.
+    # Hashing the file detects changed contents even if its record is unchanged.
+    resume_sha256 = hashlib.sha256(stored_path.read_bytes()).hexdigest()
 
-    prepared_resume_features = prepare_resume_features(resume_text)
-
-    # Parse once per request; section evidence explains where requirements
-    # appear without changing the existing resume-only relevance score.
-    structured_resume = parse_resume_text(resume_text)
-    section_features = prepare_resume_section_features(structured_resume)
-
-    # Only the authenticated user's curated profile can contribute evidence.
-    # Contact details, target roles, links, and work preferences are excluded.
     candidate_profile = db.scalar(
         select(CandidateProfile).where(
             CandidateProfile.user_id == user_id
         )
     )
 
-    profile_section_features: dict[str, frozenset[str]] = {}
-    profile_features = frozenset()
+    profile_data = (
+        {
+            "headline": candidate_profile.headline,
+            "professional_summary": candidate_profile.professional_summary,
+            "skills": candidate_profile.skills,
+            "experience": candidate_profile.experience,
+            "projects": candidate_profile.projects,
+            "education": candidate_profile.education,
+            "certifications": candidate_profile.certifications,
+        }
+        if candidate_profile is not None
+        else {}
+    )
 
-    if candidate_profile is not None:
-        profile_section_features = prepare_candidate_profile_section_features(
-            {
-                "headline": candidate_profile.headline,
-                "professional_summary": candidate_profile.professional_summary,
-                "skills": candidate_profile.skills,
-                "experience": candidate_profile.experience,
-                "projects": candidate_profile.projects,
-                "education": candidate_profile.education,
-                "certifications": candidate_profile.certifications,
-            }
-        )
-        profile_features = frozenset().union(
-            *profile_section_features.values()
-        )
+    profile_fingerprint = _stable_fingerprint(profile_data)
 
-    has_profile_evidence = bool(profile_features)
-    combined_features = prepared_resume_features | profile_features
-
-    # Score from lightweight rows; full Job objects are only loaded for the
-    # page that is returned.
+    # Load lightweight rows so changes to any matching-relevant job field
+    # produce a new cache key, including edits that preserve created_at.
     job_rows = db.execute(
         select(
             Job.id,
@@ -503,109 +558,158 @@ def match_jobs_to_resume(
         )
     ).all()
 
-    # Corpus-wide term weights make distinctive skills count for more than
-    # generic words. Without them the matcher falls back to unweighted scoring.
-    term_weights = _corpus_term_weights(job_rows)
+    corpus_fingerprint = _job_corpus_fingerprint(job_rows)
 
-    scored = []
-    for row in job_rows:
-        # Preserve the original resume-only score and evidence.
-        match = score_resume_job_match(
-            "",
-            title=row.title,
-            description=row.description,
-            company=row.company,
-            prepared_resume_features=prepared_resume_features,
-            term_weights=term_weights,
-        )
-        match["term_evidence"] = build_requirement_term_evidence(
-            row.description,
-            section_features,
-            company=row.company,
+    cache_key = (
+        str(user_id),
+        resume.id,
+        resume.original_filename,
+        resume_sha256,
+        profile_fingerprint,
+        corpus_fingerprint,
+    )
+
+    scored = _get_cached_match_results(cache_key)
+
+    if scored is None:
+        resume_text = extract_resume_text(
+            stored_path,
+            resume.original_filename,
         )
 
-        if has_profile_evidence:
-            combined_match = score_resume_job_match(
+        prepared_resume_features = prepare_resume_features(resume_text)
+
+        # Parse once on a cache miss; section evidence explains where
+        # requirements appear without changing the resume-only score.
+        structured_resume = parse_resume_text(resume_text)
+        section_features = prepare_resume_section_features(structured_resume)
+
+        profile_section_features: dict[str, frozenset[str]] = {}
+        profile_features = frozenset()
+
+        if candidate_profile is not None:
+            profile_section_features = (
+                prepare_candidate_profile_section_features(profile_data)
+            )
+            profile_features = frozenset().union(
+                *profile_section_features.values()
+            )
+
+        has_profile_evidence = bool(profile_features)
+        combined_features = prepared_resume_features | profile_features
+
+        # Corpus-wide term weights are reused when the job corpus is unchanged.
+        term_weights = _corpus_term_weights(
+            job_rows,
+            corpus_fingerprint=corpus_fingerprint,
+        )
+
+        scored_rows = []
+
+        for row in job_rows:
+            match = score_resume_job_match(
                 "",
                 title=row.title,
                 description=row.description,
                 company=row.company,
-                prepared_resume_features=combined_features,
+                prepared_resume_features=prepared_resume_features,
                 term_weights=term_weights,
             )
-
-            matched_sources = classify_match_terms(
-                combined_match["matched_terms"],
-                prepared_resume_features,
-                profile_features,
-            )
-            required_sources = classify_match_terms(
-                combined_match["required_terms_found"],
-                prepared_resume_features,
-                profile_features,
-            )
-            preferred_sources = classify_match_terms(
-                combined_match["preferred_terms_found"],
-                prepared_resume_features,
-                profile_features,
+            match["term_evidence"] = build_requirement_term_evidence(
+                row.description,
+                section_features,
+                company=row.company,
             )
 
-            match.update(
-                {
-                    "profile_match_score": combined_match["match_score"],
-                    "profile_matched_terms": matched_sources["profile"],
-                    "profile_only_matched_terms": matched_sources["profile_only"],
-                    "terms_not_found_in_resume_or_profile": (
-                        combined_match["terms_not_found_in_resume"]
-                    ),
-                    "required_terms_found_in_profile": (
-                        required_sources["profile"]
-                    ),
-                    "required_terms_found_in_resume_or_profile": (
-                        combined_match["required_terms_found"]
-                    ),
-                    "required_terms_not_found_in_resume_or_profile": (
-                        combined_match["required_terms_not_found"]
-                    ),
-                    "preferred_terms_found_in_profile": (
-                        preferred_sources["profile"]
-                    ),
-                    "preferred_terms_found_in_resume_or_profile": (
-                        combined_match["preferred_terms_found"]
-                    ),
-                    "preferred_terms_not_found_in_resume_or_profile": (
-                        combined_match["preferred_terms_not_found"]
-                    ),
-                    "profile_term_evidence": build_requirement_term_evidence(
-                        row.description,
-                        profile_section_features,
-                        company=row.company,
-                        section_names=PROFILE_EVIDENCE_SECTIONS,
-                    ),
-                    "profile_match_reasons": combined_match["match_reasons"],
-                }
-            )
+            if has_profile_evidence:
+                combined_match = score_resume_job_match(
+                    "",
+                    title=row.title,
+                    description=row.description,
+                    company=row.company,
+                    prepared_resume_features=combined_features,
+                    term_weights=term_weights,
+                )
 
-        scored.append((row, match))
+                matched_sources = classify_match_terms(
+                    combined_match["matched_terms"],
+                    prepared_resume_features,
+                    profile_features,
+                )
+                required_sources = classify_match_terms(
+                    combined_match["required_terms_found"],
+                    prepared_resume_features,
+                    profile_features,
+                )
+                preferred_sources = classify_match_terms(
+                    combined_match["preferred_terms_found"],
+                    prepared_resume_features,
+                    profile_features,
+                )
 
-    # Rank using combined evidence when available, retaining the resume-only
-    # score as a tie-breaker. Pagination still happens after full ranking.
-    scored.sort(
-        key=lambda pair: (
-            (
-                pair[1]["profile_match_score"]
-                if pair[1].get("profile_match_score") is not None
-                else pair[1]["match_score"]
+                match.update(
+                    {
+                        "profile_match_score": combined_match["match_score"],
+                        "profile_matched_terms": matched_sources["profile"],
+                        "profile_only_matched_terms": matched_sources["profile_only"],
+                        "terms_not_found_in_resume_or_profile": (
+                            combined_match["terms_not_found_in_resume"]
+                        ),
+                        "required_terms_found_in_profile": (
+                            required_sources["profile"]
+                        ),
+                        "required_terms_found_in_resume_or_profile": (
+                            combined_match["required_terms_found"]
+                        ),
+                        "required_terms_not_found_in_resume_or_profile": (
+                            combined_match["required_terms_not_found"]
+                        ),
+                        "preferred_terms_found_in_profile": (
+                            preferred_sources["profile"]
+                        ),
+                        "preferred_terms_found_in_resume_or_profile": (
+                            combined_match["preferred_terms_found"]
+                        ),
+                        "preferred_terms_not_found_in_resume_or_profile": (
+                            combined_match["preferred_terms_not_found"]
+                        ),
+                        "profile_term_evidence": build_requirement_term_evidence(
+                            row.description,
+                            profile_section_features,
+                            company=row.company,
+                            section_names=PROFILE_EVIDENCE_SECTIONS,
+                        ),
+                        "profile_match_reasons": combined_match["match_reasons"],
+                    }
+                )
+
+            scored_rows.append((row, match))
+
+        # Rank the complete corpus before storing results or paginating.
+        scored_rows.sort(
+            key=lambda pair: (
+                (
+                    pair[1]["profile_match_score"]
+                    if pair[1].get("profile_match_score") is not None
+                    else pair[1]["match_score"]
+                ),
+                pair[1]["match_score"],
+                pair[0].created_at,
+                pair[0].id,
             ),
-            pair[1]["match_score"],
-            pair[0].created_at,
-            pair[0].id,
-        ),
-        reverse=True,
-    )
+            reverse=True,
+        )
 
+        # Store IDs and plain match dictionaries, never ORM row objects.
+        scored = [
+            (row.id, match)
+            for row, match in scored_rows
+        ]
+        _store_cached_match_results(cache_key, scored)
+
+    # Pagination uses the cached complete ranking on both cache hits and misses.
     page = scored[skip : skip + limit]
-    page_ids = [row.id for row, _ in page]
+    page_ids = [job_id for job_id, _ in page]
     jobs_by_id = (
         {
             job.id: job
@@ -616,8 +720,8 @@ def match_jobs_to_resume(
     )
 
     items = []
-    for row, match in page:
-        job = jobs_by_id.get(row.id)
+    for job_id, match in page:
+        job = jobs_by_id.get(job_id)
         if job is None:  # Deleted between the two queries.
             continue
         items.append({**JobRead.model_validate(job).model_dump(), **match})

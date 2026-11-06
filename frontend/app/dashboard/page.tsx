@@ -2254,7 +2254,7 @@ const [profileRefreshKey, setProfileRefreshKey] = useState(0);
       setResumeMatchNotice(
         result.total === 0
           ? "No jobs are available to match yet."
-          : `Screened ${result.total} jobs against ${result.resume_filename}.`,
+          : `Screened ${result.items.length} of ${result.total} matching jobs against ${result.resume_filename}.`,
       );
     } catch (err) {
       setResumeMatchError(
@@ -3276,7 +3276,7 @@ const [profileRefreshKey, setProfileRefreshKey] = useState(0);
                           Resume match results
                         </h3>
                         <span className="text-sm text-slate-500">
-                          {resumeMatches.total} jobs analysed
+                          {resumeMatches.items.length} of {resumeMatches.total} jobs screened
                         </span>
                       </div>
 

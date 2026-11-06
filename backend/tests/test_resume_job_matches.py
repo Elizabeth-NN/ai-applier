@@ -20,6 +20,10 @@ from app.models.resume import Resume
 
 @pytest.fixture
 def match_context(tmp_path, monkeypatch) -> Generator[dict, None, None]:
+    # The application cache is process-wide; isolate each test's cache state.
+    with jobs_api._match_result_lock:
+        jobs_api._match_result_cache.clear()
+
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
