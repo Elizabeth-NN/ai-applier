@@ -167,3 +167,31 @@ def test_returns_unknown_when_experience_level_is_not_clear(job):
     from app.services.job_relevance import classify_experience_level
 
     assert classify_experience_level(job) == "unknown"
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "Software Engineer",
+        "Software Developer",
+        "Graduate Software Engineer",
+        "Junior Software Developer",
+        "Associate Software Engineer",
+    ],
+)
+def test_general_software_roles_match_software_engineering_family(title):
+    result = score_job_relevance({"title": title})
+
+    assert "Software engineering" in result["matched_role_families"]
+    assert result["score"] >= 40
+
+
+def test_unrelated_developer_role_does_not_match_software_engineering_family():
+    result = score_job_relevance(
+        {
+            "title": "Business Development Manager",
+            "description": "Build partnerships and manage client accounts.",
+        }
+    )
+
+    assert "Software engineering" not in result["matched_role_families"]

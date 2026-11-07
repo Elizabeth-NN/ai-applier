@@ -36,6 +36,13 @@ ROLE_KEYWORDS: dict[str, tuple[str, ...]] = {
         "javascript",
         "typescript",
     ),
+    "Software engineering": (
+        "software engineer",
+        "software developer",
+        "software engineering",
+        "software development",
+        "software programmer",
+    ),
 }
 
 ENTRY_LEVEL_KEYWORDS = (
