@@ -1,5 +1,6 @@
 """Conservative, explainable screening of jobs against candidate evidence."""
 
+import re
 from collections.abc import Mapping
 from typing import Any
 
@@ -24,15 +25,56 @@ def _string_list(value: Any) -> list[str]:
     ]
 
 
-def _preference_types(value: Any) -> list[str]:
-    """Normalize employment types without assuming malformed preferences."""
-    if not isinstance(value, list):
-        return []
-    return [
-        item.strip().casefold()
-        for item in value
-        if isinstance(item, str) and item.strip()
-    ]
+_EMPLOYMENT_TYPE_ALIASES = {
+    "fulltime": "full-time",
+    "contract": "contract",
+    "contractor": "contract",
+    "contractbased": "contract",
+    "parttime": "part-time",
+    "intern": "internship",
+    "internship": "internship",
+    "temp": "temporary",
+    "temporary": "temporary",
+    "other": "other",
+}
+
+
+def _normalize_employment_type(value: Any) -> str:
+    """Normalize common employment labels while preserving unknown labels."""
+    if not isinstance(value, str):
+        return ""
+
+    cleaned = re.sub(r"[_\s]+", " ", value.strip().casefold())
+    compact = re.sub(r"[^a-z0-9]+", "", cleaned)
+
+    return _EMPLOYMENT_TYPE_ALIASES.get(
+        compact,
+        cleaned.replace(" ", "-"),
+    )
+
+
+def _employment_type_values(value: Any) -> set[str]:
+    """Extract normalized employment types from strings or string lists."""
+    if isinstance(value, str):
+        values = [value]
+    elif isinstance(value, list):
+        values = value
+    else:
+        return set()
+
+    result = set()
+    for item in values:
+        if not isinstance(item, str):
+            continue
+
+        parts = re.split(r"[,;/&]|\bor\b", item, flags=re.IGNORECASE)
+        result.update(
+            normalized
+            for part in parts
+            if (normalized := _normalize_employment_type(part))
+        )
+
+    return result
 
 
 def screen_job(
@@ -88,25 +130,18 @@ def screen_job(
     else:
         remote_fit = "not_specified"
 
-    preferred_types = _preference_types(
-        preferences.get("employment_type")
+    raw_preferred_types = preferences.get("employment_type")
+    preferred_types = (
+        _employment_type_values(raw_preferred_types)
+        if isinstance(raw_preferred_types, list)
+        else set()
     )
-    employment_type = str(job.get("employment_type") or "").strip().casefold()
+    actual_types = _employment_type_values(job.get("employment_type"))
 
-    if preferred_types and employment_type:
-        # Some sources store multiple employment types in one string.
-        actual_types = {
-            part.strip()
-            for part in employment_type.replace("/", ",").split(",")
-            if part.strip()
-        }
+    if preferred_types and actual_types:
         employment_fit = (
             "aligned"
-            if any(
-                preferred in actual_types
-                or preferred == employment_type
-                for preferred in preferred_types
-            )
+            if preferred_types.intersection(actual_types)
             else "mismatch"
         )
     elif preferred_types:

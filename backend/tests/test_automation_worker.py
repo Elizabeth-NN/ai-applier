@@ -17,6 +17,7 @@ from app.services.automation_queue import (
     create_automation_run,
     enqueue_automation_task,
 )
+from app.workers import automation_worker
 from app.workers.automation_worker import process_screening_task
 
 
@@ -236,3 +237,127 @@ def test_screening_worker_rejects_task_owned_by_another_worker(db):
     ).all()
 
     assert saved == []
+
+
+
+def prepare_queued_task(db, *, max_attempts=3):
+    run, task, resume, jobs = create_screening_task(db)
+
+    task.status = "queued"
+    task.locked_by = None
+    task.locked_until = None
+    task.attempts = 0
+    task.max_attempts = max_attempts
+    db.commit()
+    db.refresh(task)
+
+    return run, task, resume, jobs
+
+
+def configure_worker_sessions(db, monkeypatch):
+    factory = sessionmaker(
+        bind=db.get_bind(),
+        class_=Session,
+        expire_on_commit=False,
+    )
+
+    monkeypatch.setattr(automation_worker, "SessionLocal", factory)
+    monkeypatch.setattr(
+        automation_worker,
+        "_heartbeat",
+        lambda **kwargs: None,
+    )
+
+
+def test_process_one_task_completes_task_and_reconciles_run(db, monkeypatch):
+    run, task, _, _ = prepare_queued_task(db)
+    configure_worker_sessions(db, monkeypatch)
+
+    def fake_process(db, task_id, *, worker_id, lease_lost=None):
+        assert task_id == task.id
+        assert worker_id == "worker-1"
+        return {"processed_count": 2, "prioritized_count": 1}
+
+    monkeypatch.setattr(
+        automation_worker,
+        "process_screening_task",
+        fake_process,
+    )
+
+    assert automation_worker.process_one_task("worker-1") is True
+
+    db.refresh(task)
+    db.refresh(run)
+
+    assert task.status == "succeeded"
+    assert task.result == {
+        "processed_count": 2,
+        "prioritized_count": 1,
+    }
+    assert task.locked_by is None
+    assert run.status == "succeeded"
+    assert run.finished_at is not None
+    assert run.error_summary is None
+
+
+def test_process_one_task_requeues_retryable_failure(db, monkeypatch):
+    run, task, _, _ = prepare_queued_task(db, max_attempts=2)
+    configure_worker_sessions(db, monkeypatch)
+
+    def fake_process(db, task_id, *, worker_id, lease_lost=None):
+        raise RuntimeError("Temporary screening failure")
+
+    monkeypatch.setattr(
+        automation_worker,
+        "process_screening_task",
+        fake_process,
+    )
+
+    assert automation_worker.process_one_task("worker-1") is True
+
+    db.refresh(task)
+    db.refresh(run)
+
+    assert task.status == "queued"
+    assert task.attempts == 1
+    assert task.last_error is not None
+    assert "Temporary screening failure" in task.last_error
+    assert task.locked_by is None
+    assert run.status == "queued"
+    assert run.finished_at is None
+
+
+def test_process_one_task_marks_exhausted_failure_and_run_failed(
+    db,
+    monkeypatch,
+):
+    run, task, _, _ = prepare_queued_task(db, max_attempts=1)
+    configure_worker_sessions(db, monkeypatch)
+
+    def fake_process(db, task_id, *, worker_id, lease_lost=None):
+        raise RuntimeError("Permanent screening failure")
+
+    monkeypatch.setattr(
+        automation_worker,
+        "process_screening_task",
+        fake_process,
+    )
+
+    assert automation_worker.process_one_task("worker-1") is True
+
+    db.refresh(task)
+    db.refresh(run)
+
+    assert task.status == "failed"
+    assert task.attempts == 1
+    assert "Permanent screening failure" in task.last_error
+    assert task.locked_by is None
+    assert run.status == "failed"
+    assert run.finished_at is not None
+    assert "Permanent screening failure" in run.error_summary
+
+
+def test_process_one_task_returns_false_when_queue_is_empty(db, monkeypatch):
+    configure_worker_sessions(db, monkeypatch)
+
+    assert automation_worker.process_one_task("worker-1") is False

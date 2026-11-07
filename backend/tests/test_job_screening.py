@@ -141,3 +141,54 @@ def test_match_score_is_context_not_a_disqualifier():
 
     assert result["match_score"] == 5
     assert result["recommendation"] == "prioritize"
+
+
+@pytest.mark.parametrize(
+    ("employment_type", "expected_fit"),
+    [
+        ("Full-Time", "aligned"),
+        ("Full Time", "aligned"),
+        ("Full-time", "aligned"),
+        ("Contract", "aligned"),
+        ("Contractor", "aligned"),
+        ("Contract-based", "aligned"),
+        ("Full-time, Contract", "aligned"),
+        ("Full-time / Contract", "aligned"),
+        ("Part-Time", "mismatch"),
+        ("Internship", "mismatch"),
+    ],
+)
+def test_employment_type_preferences_are_normalized(
+    employment_type,
+    expected_fit,
+):
+    result = screen_job(
+        base_job(employment_type=employment_type),
+        {
+            "work_preferences": {
+                "remote": True,
+                "employment_type": ["full-time", "contract"],
+            }
+        },
+    )
+
+    assert result["employment_fit"] == expected_fit
+
+    if expected_fit == "mismatch":
+        assert result["recommendation"] == "review"
+    else:
+        assert result["recommendation"] == "prioritize"
+
+
+def test_multiple_preferred_employment_types_are_normalized():
+    result = screen_job(
+        base_job(employment_type="Contractor"),
+        {
+            "work_preferences": {
+                "employment_type": ["Full Time", "Contractor"],
+            }
+        },
+    )
+
+    assert result["employment_fit"] == "aligned"
+    assert result["recommendation"] == "prioritize"
