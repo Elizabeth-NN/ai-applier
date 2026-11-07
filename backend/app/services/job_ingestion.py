@@ -153,8 +153,10 @@ def ingest_himalayas_batch(
     db: Session,
     *,
     max_pages: int = 5,
+    automation_run_id: int | None = None,
+    task_id: int | None = None,
 ) -> dict:
-    """Import a bounded Himalayas batch and persist resumable progress."""
+    """Import a bounded batch with durable progress and task replay protection."""
     from app.models.himalayas_ingestion_state import (
         HimalayasIngestionState,
     )
@@ -162,12 +164,29 @@ def ingest_himalayas_batch(
     if not 1 <= max_pages <= 25:
         raise ValueError("max_pages must be between 1 and 25")
 
+    if (automation_run_id is None) != (task_id is None):
+        raise ValueError(
+            "automation_run_id and task_id must be supplied together."
+        )
+
+    if automation_run_id is not None:
+        if (
+            isinstance(automation_run_id, bool)
+            or not isinstance(automation_run_id, int)
+            or automation_run_id < 1
+        ):
+            raise ValueError("automation_run_id must be a positive integer.")
+        if (
+            isinstance(task_id, bool)
+            or not isinstance(task_id, int)
+            or task_id < 1
+        ):
+            raise ValueError("task_id must be a positive integer.")
+
     now = datetime.now(timezone.utc)
 
     try:
         # Create the singleton row if this is the first batch.
-        # PostgreSQL's conflict handling makes initialization safe when
-        # two administrators start at nearly the same time.
         db.execute(
             text(
                 """
@@ -187,8 +206,30 @@ def ingest_himalayas_batch(
         if state is None:
             raise RuntimeError("Could not initialize ingestion state")
 
-        # A completed scan starts a fresh scan when called again.
+        # Never allow manual requests or another run to move an owned cursor.
+        if automation_run_id is None:
+            if state.automation_run_id is not None:
+                raise RuntimeError(
+                    "The Himalayas cursor is owned by an automation run."
+                )
+        elif state.automation_run_id != automation_run_id:
+            raise RuntimeError(
+                "Automation run does not own the Himalayas ingestion cursor."
+            )
+
+        # This check must precede completed-scan reset. A retry of the final
+        # task must replay its result rather than start another full scan.
+        processed_batches = dict(state.processed_batches or {})
+        task_key = str(task_id) if task_id is not None else None
+
+        if task_key is not None and task_key in processed_batches:
+            return dict(processed_batches[task_key])
+
         if state.status == "completed":
+            if automation_run_id is not None:
+                raise RuntimeError(
+                    "The automated ingestion scan is already completed."
+                )
             state.cursor = None
             state.status = "running"
             state.pages_fetched = 0
@@ -198,6 +239,7 @@ def ingest_himalayas_batch(
             state.expired = 0
             state.started_at = now
             state.completed_at = None
+            state.processed_batches = {}
         elif state.started_at is None:
             state.started_at = now
 
@@ -248,9 +290,7 @@ def ingest_himalayas_batch(
         else:
             state.status = "running"
 
-        db.commit()
-
-        return {
+        result = {
             "status": state.status,
             "pages_this_batch": batch["pages_fetched"],
             "fetched_this_batch": len(batch["jobs"]),
@@ -264,6 +304,15 @@ def ingest_himalayas_batch(
             "expired": state.expired,
             "completed": batch["complete"],
         }
+
+        # Save the replay record in the same transaction as job imports and
+        # cursor advancement. A crash cannot commit one without the others.
+        if task_key is not None:
+            processed_batches[task_key] = result
+            state.processed_batches = processed_batches
+
+        db.commit()
+        return result
     except Exception:
         db.rollback()
         raise

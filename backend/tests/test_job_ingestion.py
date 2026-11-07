@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 import pytest
 from sqlalchemy import create_engine, select, func
 from sqlalchemy.orm import sessionmaker
@@ -273,21 +275,29 @@ def test_himalayas_ingestion_updates_without_duplicate(
 def test_himalayas_ingestion_preserves_verified_metadata(
     db_session, monkeypatch
 ):
+    verified_at = datetime.now(timezone.utc)
     fields = incoming_himalayas_job()
     fields.update(
         eligible_countries=["Kenya"],
         eligibility_status="eligible",
         listing_status="active",
+        eligibility_evidence_url="https://example.com/kenya-eligibility",
         eligibility_evidence="Reviewed evidence",
+        eligibility_verified_at=verified_at,
+        eligibility_verified_by="admin-1",
     )
     existing = Job(**fields)
     db_session.add(existing)
     db_session.commit()
 
+    incoming = incoming_himalayas_job(title="Refreshed Developer")
+    incoming["eligible_countries"] = ["United States"]
+    incoming["eligibility_status"] = "unknown"
+
     monkeypatch.setattr(
         job_ingestion,
         "fetch_himalayas_jobs",
-        lambda: [incoming_himalayas_job(title="Refreshed Developer")],
+        lambda: [incoming],
     )
     job_ingestion.ingest_himalayas_jobs(db_session)
     db_session.refresh(existing)
@@ -296,7 +306,12 @@ def test_himalayas_ingestion_preserves_verified_metadata(
     assert existing.eligible_countries == ["Kenya"]
     assert existing.eligibility_status == "eligible"
     assert existing.listing_status == "active"
+    assert existing.eligibility_evidence_url == (
+        "https://example.com/kenya-eligibility"
+    )
     assert existing.eligibility_evidence == "Reviewed evidence"
+    assert existing.eligibility_verified_at == verified_at.replace(tzinfo=None)
+    assert existing.eligibility_verified_by == "admin-1"
 
 
 def test_himalayas_ingestion_preserves_existing_application_url(
