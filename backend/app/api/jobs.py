@@ -9,6 +9,12 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pathlib import Path
 from sqlalchemy import func, literal, or_, select
+
+from app.models import (
+    AutomationRun,
+    AutomationTask,
+    HimalayasIngestionState,
+)
 from sqlalchemy.orm import Session
 
 from app.core.auth import CurrentAdmin, CurrentUser
@@ -801,6 +807,133 @@ def get_job(job_id: int, db: Session = Depends(get_db)):
 
 
 @router.post(
+    "/ingest/himalayas/start",
+    status_code=status.HTTP_202_ACCEPTED,
+    responses={
+        401: {"description": "Authentication is required."},
+        403: {"description": "Admin access is required."},
+        409: {"description": "An automated Himalayas scan is already active."},
+    },
+)
+def start_himalayas_ingestion(
+    _admin_id: CurrentAdmin,
+    db: Session = Depends(get_db),
+):
+    """Start a durable, worker-driven full scan of the Himalayas feed."""
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+    from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+    now = datetime.now(timezone.utc)
+    dialect = db.get_bind().dialect.name
+
+    try:
+        # Initialize the singleton row without committing separately.
+        if dialect == "postgresql":
+            statement = pg_insert(HimalayasIngestionState).values(
+                id=1,
+                status="running",
+                processed_batches={},
+            ).on_conflict_do_nothing(index_elements=["id"])
+            db.execute(statement)
+        elif dialect == "sqlite":
+            statement = sqlite_insert(HimalayasIngestionState).values(
+                id=1,
+                status="running",
+                processed_batches={},
+            ).on_conflict_do_nothing(index_elements=["id"])
+            db.execute(statement)
+        else:
+            state = db.get(HimalayasIngestionState, 1)
+            if state is None:
+                db.add(HimalayasIngestionState(
+                    id=1,
+                    status="running",
+                    processed_batches={},
+                ))
+                db.flush()
+
+        state = db.scalar(
+            select(HimalayasIngestionState)
+            .where(HimalayasIngestionState.id == 1)
+            .with_for_update()
+        )
+
+        if state is None:
+            raise RuntimeError(
+                "Could not initialize Himalayas ingestion state."
+            )
+
+        if state.automation_run_id is not None:
+            active_run = db.get(AutomationRun, state.automation_run_id)
+            if active_run is not None and active_run.status in {
+                "queued",
+                "running",
+            }:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        "A Himalayas ingestion run is already active "
+                        f"(run_id={active_run.id})."
+                    ),
+                )
+
+        run = AutomationRun(
+            user_id=None,
+            pipeline_type="himalayas_ingestion",
+            trigger_type="manual",
+            status="queued",
+            summary={},
+        )
+        db.add(run)
+        db.flush()
+
+        task = AutomationTask(
+            run_id=run.id,
+            user_id=None,
+            task_type="ingest_himalayas_batch",
+            status="queued",
+            idempotency_key="initial-batch",
+            payload={"max_pages": 25},
+            max_attempts=3,
+        )
+        db.add(task)
+
+        # Reset legacy/finished state and claim the cursor for this run.
+        state.cursor = None
+        state.automation_run_id = run.id
+        state.processed_batches = {}
+        state.status = "running"
+        state.pages_fetched = 0
+        state.fetched = 0
+        state.inserted = 0
+        state.updated = 0
+        state.expired = 0
+        state.started_at = now
+        state.updated_at = now
+        state.completed_at = None
+
+        db.commit()
+        db.refresh(run)
+        db.refresh(task)
+
+        return {
+            "run_id": run.id,
+            "task_id": task.id,
+            "pipeline_type": run.pipeline_type,
+            "status": run.status,
+            "task_status": task.status,
+            "max_pages": 25,
+        }
+
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception:
+        db.rollback()
+        raise
+
+
+@router.post(
     "/ingest/himalayas/batch",
     response_model=HimalayasBatchIngestionResult,
     responses={
@@ -828,4 +961,9 @@ def refresh_himalayas_batch(
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Himalayas could not provide a valid batch.",
+        ) from exc
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
         ) from exc

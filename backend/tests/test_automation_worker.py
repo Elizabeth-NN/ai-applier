@@ -9,6 +9,7 @@ from app.db.session import Base
 from app.models import (
     AutomationScreeningResult,
     AutomationTask,
+    HimalayasIngestionState,
     Job,
     Resume,
 )
@@ -240,6 +241,42 @@ def test_screening_worker_rejects_task_owned_by_another_worker(db):
 
 
 
+
+def create_himalayas_task(db, *, max_pages=25):
+    run, created = create_automation_run(
+        db,
+        user_id=None,
+        pipeline_type="himalayas_ingestion",
+        idempotency_key="himalayas-worker-test-run",
+    )
+    assert created is True
+
+    task, created = enqueue_automation_task(
+        db,
+        run_id=run.id,
+        user_id=None,
+        task_type="ingest_himalayas_batch",
+        idempotency_key="initial-batch",
+        payload={"max_pages": max_pages},
+    )
+    assert created is True
+
+    task.status = "running"
+    task.locked_by = "worker-1"
+
+    state = HimalayasIngestionState(
+        id=1,
+        automation_run_id=run.id,
+        status="running",
+        cursor="test-cursor",
+        processed_batches={},
+    )
+    db.add(state)
+    db.commit()
+    db.refresh(task)
+
+    return run, task, state
+
 def prepare_queued_task(db, *, max_attempts=3):
     run, task, resume, jobs = create_screening_task(db)
 
@@ -361,3 +398,123 @@ def test_process_one_task_returns_false_when_queue_is_empty(db, monkeypatch):
     configure_worker_sessions(db, monkeypatch)
 
     assert automation_worker.process_one_task("worker-1") is False
+
+def test_himalayas_worker_enqueues_successor_for_incomplete_batch(
+    db,
+    monkeypatch,
+):
+    run, task, state = create_himalayas_task(db, max_pages=10)
+
+    def fake_ingest(
+        db,
+        *,
+        max_pages,
+        automation_run_id,
+        task_id,
+    ):
+        assert max_pages == 10
+        assert automation_run_id == run.id
+        assert task_id == task.id
+
+        return {
+            "pages_fetched": 10,
+            "fetched": 200,
+            "inserted": 180,
+            "updated": 20,
+            "expired": 0,
+            "pages_this_batch": 10,
+            "fetched_this_batch": 200,
+            "completed": False,
+        }
+
+    monkeypatch.setattr(
+        "app.services.job_ingestion.ingest_himalayas_batch",
+        fake_ingest,
+    )
+
+    result = automation_worker.process_himalayas_ingestion_task(
+        db,
+        task.id,
+        worker_id="worker-1",
+    )
+
+    assert result["completed"] is False
+    assert result["successor_task_id"] is not None
+
+    successor = db.get(AutomationTask, result["successor_task_id"])
+    assert successor is not None
+    assert successor.run_id == run.id
+    assert successor.user_id is None
+    assert successor.task_type == "ingest_himalayas_batch"
+    assert successor.status == "queued"
+    assert successor.idempotency_key == f"batch-after-{task.id}"
+    assert successor.payload == {"max_pages": 10}
+
+    db.refresh(run)
+    assert run.status == "running"
+    assert run.started_at is not None
+    assert run.summary["pages_fetched"] == 10
+    assert run.summary["fetched"] == 200
+    assert run.summary["inserted"] == 180
+    assert run.summary["updated"] == 20
+    assert run.summary["completed"] is False
+
+    db.refresh(state)
+    assert state.automation_run_id == run.id
+
+
+def test_himalayas_worker_does_not_enqueue_successor_when_complete(
+    db,
+    monkeypatch,
+):
+    run, task, _state = create_himalayas_task(db)
+
+    def fake_ingest(
+        db,
+        *,
+        max_pages,
+        automation_run_id,
+        task_id,
+    ):
+        assert automation_run_id == run.id
+        assert task_id == task.id
+
+        return {
+            "pages_fetched": 3,
+            "fetched": 47,
+            "inserted": 40,
+            "updated": 7,
+            "expired": 0,
+            "pages_this_batch": 3,
+            "fetched_this_batch": 47,
+            "completed": True,
+        }
+
+    monkeypatch.setattr(
+        "app.services.job_ingestion.ingest_himalayas_batch",
+        fake_ingest,
+    )
+
+    result = automation_worker.process_himalayas_ingestion_task(
+        db,
+        task.id,
+        worker_id="worker-1",
+    )
+
+    assert result["completed"] is True
+    assert result["successor_task_id"] is None
+
+    tasks = db.scalars(
+        select(AutomationTask).where(
+            AutomationTask.run_id == run.id
+        )
+    ).all()
+
+    assert len(tasks) == 1
+    assert tasks[0].id == task.id
+
+    db.refresh(run)
+    assert run.status == "running"
+    assert run.summary["pages_fetched"] == 3
+    assert run.summary["fetched"] == 47
+    assert run.summary["completed"] is True

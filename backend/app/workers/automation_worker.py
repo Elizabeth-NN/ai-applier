@@ -194,6 +194,93 @@ def process_screening_task(
 
 
 
+
+def process_himalayas_ingestion_task(
+    db: Session,
+    task_id: int,
+    *,
+    worker_id: str,
+    lease_lost: threading.Event | None = None,
+) -> dict:
+    """Process one durable batch of the shared Himalayas job feed."""
+    from app.services.automation_queue import enqueue_automation_task
+    from app.services.job_ingestion import ingest_himalayas_batch
+
+    task = db.get(AutomationTask, task_id)
+    if task is None or task.status != "running":
+        raise ValueError("Himalayas ingestion task is missing or not running.")
+
+    if not worker_id or task.locked_by != worker_id:
+        raise ValueError("Himalayas ingestion task is not owned by this worker.")
+
+    if lease_lost is not None and lease_lost.is_set():
+        raise RuntimeError("Task lease was lost.")
+
+    if task.task_type != "ingest_himalayas_batch" or task.user_id is not None:
+        raise ValueError("Task is not a valid global Himalayas ingestion task.")
+
+    run = db.get(AutomationRun, task.run_id)
+    if (
+        run is None
+        or run.user_id is not None
+        or run.pipeline_type != "himalayas_ingestion"
+    ):
+        raise ValueError("Himalayas automation run validation failed.")
+
+    payload = task.payload or {}
+    max_pages = payload.get("max_pages", 25)
+    if (
+        isinstance(max_pages, bool)
+        or not isinstance(max_pages, int)
+        or not 1 <= max_pages <= 25
+    ):
+        raise ValueError("Task payload max_pages must be an integer from 1 to 25.")
+
+    result = ingest_himalayas_batch(
+        db,
+        max_pages=max_pages,
+        automation_run_id=run.id,
+        task_id=task.id,
+    )
+
+    if lease_lost is not None and lease_lost.is_set():
+        raise RuntimeError("Task lease was lost after ingestion.")
+
+    successor_id = None
+    if not result["completed"]:
+        successor, _created = enqueue_automation_task(
+            db,
+            run_id=run.id,
+            user_id=None,
+            task_type="ingest_himalayas_batch",
+            idempotency_key=f"batch-after-{task.id}",
+            payload={"max_pages": max_pages},
+        )
+        successor_id = successor.id
+
+    run.status = "running"
+    if run.started_at is None:
+        run.started_at = _utc_now()
+
+    run.summary = {
+        **(run.summary or {}),
+        "pages_fetched": result["pages_fetched"],
+        "fetched": result["fetched"],
+        "inserted": result["inserted"],
+        "updated": result["updated"],
+        "expired": result["expired"],
+        "last_batch_pages": result["pages_this_batch"],
+        "last_batch_fetched": result["fetched_this_batch"],
+        "completed": result["completed"],
+    }
+    db.commit()
+
+    return {
+        **result,
+        "successor_task_id": successor_id,
+    }
+
+
 def _heartbeat(
     *,
     task_id: int,
@@ -286,6 +373,7 @@ def process_one_task(worker_id: str) -> bool:
 
         task_id = task.id
         run_id = task.run_id
+        task_type = task.task_type
 
     stop_event = threading.Event()
     lease_lost = threading.Event()
@@ -305,12 +393,22 @@ def process_one_task(worker_id: str) -> bool:
 
     try:
         with SessionLocal() as db:
-            result = process_screening_task(
-                db,
-                task_id=task_id,
-                worker_id=worker_id,
-                lease_lost=lease_lost,
-            )
+            if task_type == "screen_jobs":
+                result = process_screening_task(
+                    db,
+                    task_id=task_id,
+                    worker_id=worker_id,
+                    lease_lost=lease_lost,
+                )
+            elif task_type == "ingest_himalayas_batch":
+                result = process_himalayas_ingestion_task(
+                    db,
+                    task_id=task_id,
+                    worker_id=worker_id,
+                    lease_lost=lease_lost,
+                )
+            else:
+                raise ValueError(f"Unsupported automation task type: {task_type}")
 
         stop_event.set()
         heartbeat.join()

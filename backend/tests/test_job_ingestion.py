@@ -538,3 +538,135 @@ def test_partial_himalayas_batch_does_not_close_absent_jobs(
 
     assert result["status"] == "running"
     assert existing.listing_status == "active"
+
+def test_himalayas_batch_replay_is_safe_after_later_tasks(
+    db_session, monkeypatch
+):
+    from app.models.himalayas_ingestion_state import (
+        HimalayasIngestionState,
+    )
+    from app.services.automation_queue import create_automation_run
+
+    run, created = create_automation_run(
+        db_session,
+        user_id=None,
+        pipeline_type="himalayas_ingestion",
+        trigger_type="manual",
+    )
+    assert created is True
+
+    db_session.add(
+        HimalayasIngestionState(
+            id=1,
+            automation_run_id=run.id,
+            status="running",
+            processed_batches={},
+        )
+    )
+    db_session.commit()
+
+    batches = iter([
+        {
+            "jobs": [],
+            "next_cursor": "cursor-after-task-101",
+            "pages_fetched": 1,
+            "complete": False,
+        },
+        {
+            "jobs": [],
+            "next_cursor": None,
+            "pages_fetched": 1,
+            "complete": True,
+        },
+    ])
+    received_cursors = []
+
+    def fake_fetch(*, cursor=None, max_pages=5):
+        received_cursors.append(cursor)
+        return next(batches)
+
+    monkeypatch.setattr(
+        job_ingestion,
+        "fetch_himalayas_batch",
+        fake_fetch,
+        raising=False,
+    )
+
+    first_result = job_ingestion.ingest_himalayas_batch(
+        db_session,
+        max_pages=1,
+        automation_run_id=run.id,
+        task_id=101,
+    )
+    second_result = job_ingestion.ingest_himalayas_batch(
+        db_session,
+        max_pages=1,
+        automation_run_id=run.id,
+        task_id=102,
+    )
+
+    # Retry the older task after the newer task has completed the scan.
+    replay_result = job_ingestion.ingest_himalayas_batch(
+        db_session,
+        max_pages=1,
+        automation_run_id=run.id,
+        task_id=101,
+    )
+
+    db_session.expire_all()
+    state = db_session.get(HimalayasIngestionState, 1)
+
+    assert first_result["completed"] is False
+    assert second_result["completed"] is True
+    assert replay_result == first_result
+    assert received_cursors == [None, "cursor-after-task-101"]
+    assert state.status == "completed"
+    assert state.pages_fetched == 2
+    assert set(state.processed_batches) == {"101", "102"}
+
+
+def test_manual_himalayas_batch_rejects_automation_owned_cursor(
+    db_session, monkeypatch
+):
+    from app.models.himalayas_ingestion_state import (
+        HimalayasIngestionState,
+    )
+    from app.services.automation_queue import create_automation_run
+
+    run, created = create_automation_run(
+        db_session,
+        user_id=None,
+        pipeline_type="himalayas_ingestion",
+        trigger_type="manual",
+    )
+    assert created is True
+
+    db_session.add(
+        HimalayasIngestionState(
+            id=1,
+            automation_run_id=run.id,
+            status="running",
+            processed_batches={},
+        )
+    )
+    db_session.commit()
+
+    def unexpected_fetch(**_kwargs):
+        raise AssertionError("Fetch must not run while automation owns the cursor")
+
+    monkeypatch.setattr(
+        job_ingestion,
+        "fetch_himalayas_batch",
+        unexpected_fetch,
+        raising=False,
+    )
+
+    with pytest.raises(RuntimeError, match="owned by an automation run"):
+        job_ingestion.ingest_himalayas_batch(db_session)
+
+    db_session.expire_all()
+    state = db_session.get(HimalayasIngestionState, 1)
+
+    assert state.automation_run_id == run.id
+    assert state.status == "running"
+    assert state.pages_fetched == 0

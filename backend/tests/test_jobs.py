@@ -1482,3 +1482,163 @@ def test_job_search_rejects_invalid_experience_level(job_context):
     )
 
     assert response.status_code == 422
+
+def test_himalayas_ingestion_start_creates_durable_run(job_context):
+    from app.models import (
+        AutomationRun,
+        AutomationTask,
+        HimalayasIngestionState,
+    )
+
+    response = job_context.post("/api/jobs/ingest/himalayas/start")
+
+    assert response.status_code == 202
+    data = response.json()
+    assert data["pipeline_type"] == "himalayas_ingestion"
+    assert data["status"] == "queued"
+    assert data["task_status"] == "queued"
+    assert data["max_pages"] == 25
+
+    db = job_context.testing_session()
+    try:
+        run = db.get(AutomationRun, data["run_id"])
+        task = db.get(AutomationTask, data["task_id"])
+        state = db.get(HimalayasIngestionState, 1)
+
+        assert run is not None
+        assert run.user_id is None
+        assert run.pipeline_type == "himalayas_ingestion"
+        assert run.status == "queued"
+
+        assert task is not None
+        assert task.run_id == run.id
+        assert task.user_id is None
+        assert task.task_type == "ingest_himalayas_batch"
+        assert task.status == "queued"
+        assert task.idempotency_key == "initial-batch"
+        assert task.payload == {"max_pages": 25}
+
+        assert state is not None
+        assert state.automation_run_id == run.id
+        assert state.status == "running"
+        assert state.cursor is None
+        assert state.processed_batches == {}
+        assert state.pages_fetched == 0
+        assert state.fetched == 0
+        assert state.inserted == 0
+        assert state.updated == 0
+        assert state.expired == 0
+        assert state.completed_at is None
+    finally:
+        db.close()
+
+
+def test_himalayas_ingestion_start_resets_legacy_scan(job_context):
+    from app.models import HimalayasIngestionState
+
+    db = job_context.testing_session()
+    try:
+        db.add(HimalayasIngestionState(
+            id=1,
+            cursor="legacy-cursor",
+            status="running",
+            pages_fetched=65,
+            fetched=1300,
+            inserted=1300,
+            updated=0,
+            expired=0,
+            processed_batches={},
+        ))
+        db.commit()
+    finally:
+        db.close()
+
+    response = job_context.post("/api/jobs/ingest/himalayas/start")
+
+    assert response.status_code == 202
+
+    db = job_context.testing_session()
+    try:
+        state = db.get(HimalayasIngestionState, 1)
+        assert state is not None
+        assert state.automation_run_id == response.json()["run_id"]
+        assert state.cursor is None
+        assert state.status == "running"
+        assert state.pages_fetched == 0
+        assert state.fetched == 0
+        assert state.inserted == 0
+        assert state.updated == 0
+        assert state.expired == 0
+        assert state.processed_batches == {}
+        assert state.completed_at is None
+    finally:
+        db.close()
+
+
+def test_himalayas_ingestion_start_rejects_existing_active_run(job_context):
+    from app.models import AutomationRun, HimalayasIngestionState
+
+    db = job_context.testing_session()
+    try:
+        run = AutomationRun(
+            user_id=None,
+            pipeline_type="himalayas_ingestion",
+            trigger_type="manual",
+            status="queued",
+            summary={},
+        )
+        db.add(run)
+        db.flush()
+
+        db.add(HimalayasIngestionState(
+            id=1,
+            cursor="existing-cursor",
+            automation_run_id=run.id,
+            status="running",
+            processed_batches={},
+        ))
+        db.commit()
+        original_run_id = run.id
+    finally:
+        db.close()
+
+    response = job_context.post("/api/jobs/ingest/himalayas/start")
+
+    assert response.status_code == 409
+    assert "already active" in response.json()["detail"]
+
+    db = job_context.testing_session()
+    try:
+        runs = db.query(AutomationRun).all()
+        state = db.get(HimalayasIngestionState, 1)
+
+        assert len(runs) == 1
+        assert runs[0].id == original_run_id
+        assert state.automation_run_id == original_run_id
+        assert state.cursor == "existing-cursor"
+    finally:
+        db.close()
+
+
+def test_himalayas_ingestion_start_requires_admin(job_context):
+    from app.models import AutomationRun, HimalayasIngestionState
+
+    def reject_admin():
+        raise HTTPException(
+            status_code=403,
+            detail="Admin access required",
+        )
+
+    from app.core.auth import require_admin
+    app.dependency_overrides[require_admin] = reject_admin
+
+    response = job_context.post("/api/jobs/ingest/himalayas/start")
+
+    assert response.status_code == 403
+
+    db = job_context.testing_session()
+    try:
+        assert db.query(AutomationRun).count() == 0
+        assert db.get(HimalayasIngestionState, 1) is None
+    finally:
+        db.close()
