@@ -16,7 +16,7 @@ def sample_job(job_id="https://himalayas.app/companies/example/jobs/python-dev")
         "companyName": "Example Company",
         "applicationLink": "https://himalayas.app/jobs/apply/python-dev",
         "employmentType": "Full-time",
-        "locationRestrictions": ["Worldwide", "Africa"],
+        "locationRestrictions": ["Kenya", "Uganda"],
         "description": "<p>Build backend services.</p>",
         "excerpt": "Build backend services.",
         "pubDate": 1792497600,
@@ -45,7 +45,8 @@ def test_normalize_job_maps_himalayas_fields():
     )
     assert result["title"] == "Remote Python Developer"
     assert result["company"] == "Example Company"
-    assert result["location"] == "Worldwide, Africa"
+    assert result["location"] == "Kenya, Uganda"
+    assert result["eligible_countries"] == ["Kenya", "Uganda"]
     assert result["employment_type"] == "Full-time"
     assert result["remote_type"] == "remote"
     assert result["eligibility_status"] == "unknown"
@@ -263,3 +264,37 @@ def test_fetch_himalayas_batch_rejects_out_of_range_page_limit(max_pages):
 
     with pytest.raises(ValueError):
         fetch_himalayas_batch(max_pages=max_pages)
+
+
+
+def test_normalize_job_preserves_empty_restrictions_as_worldwide():
+    raw = sample_job()
+    raw["locationRestrictions"] = []
+
+    result = normalize_job(raw)
+
+    assert result["location"] is None
+    assert result["eligible_countries"] == []
+
+
+def test_normalize_job_keeps_missing_restrictions_unknown():
+    raw = sample_job()
+    raw.pop("locationRestrictions")
+
+    result = normalize_job(raw)
+
+    assert result["location"] is None
+    assert result["eligible_countries"] is None
+
+
+def test_normalize_job_supports_documented_restriction_objects():
+    raw = sample_job()
+    raw["locationRestrictions"] = [
+        {"alpha2": "KE", "name": "Kenya", "slug": "kenya"},
+        {"alpha2": "UG", "name": "Uganda", "slug": "uganda"},
+    ]
+
+    result = normalize_job(raw)
+
+    assert result["location"] == "Kenya, Uganda"
+    assert result["eligible_countries"] == ["Kenya", "Uganda"]

@@ -94,16 +94,36 @@ def normalize_job(raw: dict) -> dict:
     title = _required_text(raw, "title")
 
     location_restrictions = raw.get("locationRestrictions")
+    eligible_countries = None
+
     if location_restrictions is not None:
-        if not isinstance(location_restrictions, list) or not all(
-            isinstance(item, str) for item in location_restrictions
-        ):
+        if not isinstance(location_restrictions, list):
             raise HimalayasAPIError(
                 "Job has invalid locationRestrictions"
             )
-        location = ", ".join(
-            item.strip() for item in location_restrictions if item.strip()
-        ) or None
+
+        eligible_countries = []
+        for item in location_restrictions:
+            if isinstance(item, str):
+                country = item.strip()
+            elif isinstance(item, dict):
+                # Support the documented object shape as well as the
+                # string format currently returned by the live feed.
+                country = item.get("name") or item.get("alpha2")
+                if not isinstance(country, str):
+                    raise HimalayasAPIError(
+                        "Job has invalid locationRestrictions"
+                    )
+                country = country.strip()
+            else:
+                raise HimalayasAPIError(
+                    "Job has invalid locationRestrictions"
+                )
+
+            if country and country not in eligible_countries:
+                eligible_countries.append(country)
+
+        location = ", ".join(eligible_countries) or None
     else:
         location = None
 
@@ -125,7 +145,7 @@ def normalize_job(raw: dict) -> dict:
         "source_name": HIMALAYAS_SOURCE_NAME,
         "source_job_id": guid,
         "remote_type": "remote",
-        "eligible_countries": None,
+        "eligible_countries": eligible_countries,
         "eligibility_status": "unknown",
         "listing_status": "unknown",
         "published_at": _published_at(raw),

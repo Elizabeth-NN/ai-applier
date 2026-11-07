@@ -32,9 +32,13 @@ def _update_existing_job(existing: Job, fields: dict) -> None:
             continue
 
         if field == "eligible_countries":
-            setattr(existing, field, value)
+            if existing.eligibility_verified_at is None:
+                setattr(existing, field, value)
         elif field == "eligibility_status":
-            if value != "unknown":
+            if (
+                value != "unknown"
+                and existing.eligibility_verified_at is None
+            ):
                 setattr(existing, field, value)
         elif field == "application_url":
             if existing.application_url is None:

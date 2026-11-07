@@ -154,30 +154,38 @@ def screen_job(
     ).strip().casefold()
     eligible_countries = job.get("eligible_countries")
 
+    countries = {
+        country.strip().casefold()
+        for country in eligible_countries
+        if isinstance(country, str) and country.strip()
+    } if isinstance(eligible_countries, list) else None
+
+    kenya_is_listed = (
+        countries is not None
+        and bool(countries.intersection({"kenya", "ke"}))
+    )
+
     if eligibility_status == "ineligible":
+        # A manually verified decision remains authoritative.
         kenya_eligibility = "ineligible"
     elif eligibility_status == "eligible":
-        if isinstance(eligible_countries, list) and eligible_countries:
-            countries = {
-                country.strip().casefold()
-                for country in eligible_countries
-                if isinstance(country, str) and country.strip()
-            }
-            if "kenya" in countries:
-                kenya_eligibility = "eligible"
-            elif countries:
-                kenya_eligibility = "conflicting_evidence"
-            else:
-                kenya_eligibility = "unknown"
+        if countries:
+            kenya_eligibility = (
+                "eligible" if kenya_is_listed else "conflicting_evidence"
+            )
         else:
             kenya_eligibility = "eligible"
-    elif isinstance(eligible_countries, list) and any(
-        isinstance(country, str) and country.strip().casefold() == "kenya"
-        for country in eligible_countries
-    ):
+    elif countries is None:
+        # None means the source did not provide restriction data.
+        kenya_eligibility = "unknown"
+    elif not countries:
+        # Himalayas documents an empty restriction list as worldwide.
+        kenya_eligibility = "eligible"
+    elif kenya_is_listed:
         kenya_eligibility = "eligible"
     else:
-        kenya_eligibility = "unknown"
+        # A non-empty country allowlist that omits Kenya excludes Kenya.
+        kenya_eligibility = "ineligible"
 
     listing_status = str(
         job.get("listing_status") or "unknown"

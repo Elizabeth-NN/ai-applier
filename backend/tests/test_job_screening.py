@@ -192,3 +192,30 @@ def test_multiple_preferred_employment_types_are_normalized():
 
     assert result["employment_fit"] == "aligned"
     assert result["recommendation"] == "prioritize"
+
+
+
+@pytest.mark.parametrize(
+    ("eligible_countries", "expected"),
+    [
+        (None, "unknown"),
+        ([], "eligible"),
+        (["Kenya"], "eligible"),
+        (["KE"], "eligible"),
+        (["United States"], "ineligible"),
+        (["Uganda", "Rwanda"], "ineligible"),
+    ],
+)
+def test_screen_uses_source_country_restrictions(
+    eligible_countries, expected
+):
+    result = screen_job(
+        base_job(
+            eligibility_status="unknown",
+            eligible_countries=eligible_countries,
+        )
+    )
+
+    assert result["kenya_eligibility"] == expected
+    if expected == "ineligible":
+        assert result["recommendation"] == "exclude"
