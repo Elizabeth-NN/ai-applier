@@ -243,13 +243,17 @@ def test_screening_worker_rejects_task_owned_by_another_worker(db):
 
 
 def create_himalayas_task(db, *, max_pages=25):
-    run, created = create_automation_run(
-        db,
+    from app.models import AutomationRun
+
+    run = AutomationRun(
         user_id=None,
         pipeline_type="himalayas_ingestion",
-        idempotency_key="himalayas-worker-test-run",
+        trigger_type="manual",
+        status="queued",
+        summary={},
     )
-    assert created is True
+    db.add(run)
+    db.flush()
 
     task, created = enqueue_automation_task(
         db,
