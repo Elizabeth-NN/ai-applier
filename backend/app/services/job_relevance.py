@@ -81,32 +81,42 @@ def score_job_relevance(job: Mapping[str, Any]) -> dict[str, Any]:
     probability.
     """
     title = str(job.get("title") or "")
-    description = str(job.get("description") or "")
     employment_type = str(job.get("employment_type") or "")
 
     title_text = title.casefold()
-    combined_text = f"{title}\n{description}".casefold()
+    non_target_title = any(
+        _contains_phrase(title_text, phrase)
+        for phrase in (
+            "qa",
+            "quality assurance",
+            "product manager",
+            "sales engineer",
+            "solutions engineer",
+            "customer success",
+            "data manager",
+            "data scientist",
+            "data analyst",
+            "human data",
+            "talent scientist",
+        )
+    )
 
     matched_families: list[str] = []
     reasons: list[str] = []
     points = 0
 
-    # A target role in the title is stronger evidence than a description-only
-    # mention. Award one contribution per role family to limit keyword spam.
+    # Use the job title as role evidence; company-description keywords alone
+    # must not turn an unrelated position into a software-development match.
     for family, keywords in ROLE_KEYWORDS.items():
-        title_match = any(_contains_phrase(title_text, word) for word in keywords)
-        description_match = any(
-            _contains_phrase(description, word) for word in keywords
+        title_match = (
+            not non_target_title
+            and any(_contains_phrase(title_text, word) for word in keywords)
         )
 
         if title_match:
             matched_families.append(family)
             reasons.append(f"{family} matches the job title")
             points += 40
-        elif description_match:
-            matched_families.append(family)
-            reasons.append(f"{family} appears in the job description")
-            points += 20
 
     if any(_contains_phrase(title_text, word) for word in ENTRY_LEVEL_KEYWORDS):
         points += 20
