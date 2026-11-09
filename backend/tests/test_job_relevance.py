@@ -195,3 +195,35 @@ def test_unrelated_developer_role_does_not_match_software_engineering_family():
     )
 
     assert "Software engineering" not in result["matched_role_families"]
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "QA Engineer - Backend (Golang)",
+        "Junior Product Manager",
+        "Graduate Talent Scientist",
+        "Human Data Manager, New Grad",
+        "Ubuntu Sales Engineer (Entry-Level)",
+        "Quality Assurance Engineer",
+    ],
+)
+def test_non_development_titles_do_not_match_software_role_families(title):
+    result = score_job_relevance({
+        "title": title,
+        "description": (
+            "We build software using Python, React, FastAPI, "
+            "JavaScript, and modern web technologies."
+        ),
+    })
+
+    assert result["matched_role_families"] == []
+
+
+def test_software_engineer_cpp_title_still_matches():
+    result = score_job_relevance({
+        "title": "Junior Software Engineer - Cross-platform C++",
+        "description": "Develop cross-platform applications.",
+    })
+
+    assert "Software engineering" in result["matched_role_families"]

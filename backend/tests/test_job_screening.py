@@ -219,3 +219,21 @@ def test_screen_uses_source_country_restrictions(
     assert result["kenya_eligibility"] == expected
     if expected == "ineligible":
         assert result["recommendation"] == "exclude"
+
+
+def test_future_position_requires_review_even_when_listing_is_active():
+    result = screen_job(
+        base_job(
+            description=(
+                "This is a potential position, planned for hiring "
+                "in Q4 2024. Build backend APIs with Python and FastAPI."
+            )
+        )
+    )
+
+    assert result["listing_status"] == "active"
+    assert result["recommendation"] == "review"
+    assert any(
+        "future or talent-pipeline position" in reason
+        for reason in result["reasons"]
+    )

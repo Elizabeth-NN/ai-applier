@@ -77,6 +77,23 @@ def _employment_type_values(value: Any) -> set[str]:
     return result
 
 
+
+_FUTURE_POSITION_PATTERNS = (
+    r"\b(?:potential|future)\s+(?:job\s+)?position\b",
+    r"\bplanned\s+for\s+hiring\b",
+    r"\btalent\s+(?:pool|pipeline)\b",
+)
+
+
+def _is_future_or_pipeline_position(job: Mapping[str, Any]) -> bool:
+    """Detect explicit future hiring or talent-pool language."""
+    description = str(job.get("description") or "").casefold()
+    return any(
+        re.search(pattern, description)
+        for pattern in _FUTURE_POSITION_PATTERNS
+    )
+
+
 def screen_job(
     job: Mapping[str, Any],
     profile: Mapping[str, Any] | None = None,
@@ -196,6 +213,12 @@ def screen_job(
     reasons: list[str] = []
     exclusions: list[str] = []
     review_reasons: list[str] = []
+
+    if _is_future_or_pipeline_position(job):
+        review_reasons.append(
+            "The description indicates a future or talent-pipeline position, "
+            "not a confirmed current vacancy."
+        )
 
     if role_alignment == "aligned":
         reasons.append("The role aligns with the target software roles.")
