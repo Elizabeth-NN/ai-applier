@@ -127,6 +127,22 @@ class ResumeJobMatchResult(BaseModel):
     limit: int
 
 
+class JobScreeningStartRequest(BaseModel):
+    """Request to start durable screening for an owned resume."""
+
+    resume_id: int = Field(ge=1)
+
+class JobScreeningStartResponse(BaseModel):
+    """Identifiers and initial state for a queued screening run."""
+
+    run_id: int
+    task_id: int
+    pipeline_type: Literal["job_screening"]
+    status: str
+    task_status: str
+    resume_id: int
+
+
 class JobScreeningItem(ResumeJobMatchItem):
     """A personalized job match with conservative screening results."""
 

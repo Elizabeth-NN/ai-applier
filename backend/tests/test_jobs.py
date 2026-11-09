@@ -5,7 +5,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.core.auth import require_admin
+from app.core.auth import require_admin, require_user
 from app.db.dependencies import get_db
 from app.db.session import Base
 from app.main import app
@@ -1642,3 +1642,120 @@ def test_himalayas_ingestion_start_requires_admin(job_context):
         assert db.get(HimalayasIngestionState, 1) is None
     finally:
         db.close()
+
+def test_screening_start_creates_durable_run_and_task(job_context):
+    from app.models import AutomationRun, AutomationTask, Resume
+
+    app.dependency_overrides[require_user] = lambda: "user_screening"
+
+    db = job_context.testing_session()
+    resume = Resume(
+        user_id="user_screening",
+        original_filename="resume.pdf",
+        storage_key="user_screening/resume.pdf",
+        content_type="application/pdf",
+        size_bytes=1024,
+    )
+    db.add(resume)
+    db.commit()
+    resume_id = resume.id
+    db.close()
+
+    response = job_context.post(
+        "/api/jobs/screen/start",
+        json={"resume_id": resume_id},
+    )
+
+    assert response.status_code == 202
+    data = response.json()
+    assert data["pipeline_type"] == "job_screening"
+    assert data["status"] == "queued"
+    assert data["task_status"] == "queued"
+    assert data["resume_id"] == resume_id
+
+    db = job_context.testing_session()
+    try:
+        run = db.get(AutomationRun, data["run_id"])
+        task = db.get(AutomationTask, data["task_id"])
+
+        assert run.user_id == "user_screening"
+        assert run.pipeline_type == "job_screening"
+        assert run.status == "queued"
+        assert run.summary["resume_id"] == resume_id
+
+        assert task.run_id == run.id
+        assert task.user_id == "user_screening"
+        assert task.task_type == "screen_jobs"
+        assert task.status == "queued"
+        assert task.payload == {"resume_id": resume_id}
+        assert task.max_attempts == 3
+    finally:
+        db.close()
+
+
+def test_screening_start_rejects_resume_owned_by_another_user(
+    job_context,
+):
+    from app.models import AutomationRun, Resume
+
+    app.dependency_overrides[require_user] = lambda: "user_screening"
+
+    db = job_context.testing_session()
+    db.add(Resume(
+        user_id="another_user",
+        original_filename="resume.pdf",
+        storage_key="another_user/resume.pdf",
+        content_type="application/pdf",
+        size_bytes=1024,
+    ))
+    db.commit()
+    db.close()
+
+    response = job_context.post(
+        "/api/jobs/screen/start",
+        json={"resume_id": 1},
+    )
+
+    assert response.status_code == 404
+
+    db = job_context.testing_session()
+    try:
+        assert db.query(AutomationRun).count() == 0
+    finally:
+        db.close()
+
+
+def test_screening_start_rejects_second_active_run(job_context):
+    from app.models import AutomationRun, Resume
+
+    app.dependency_overrides[require_user] = lambda: "user_screening"
+
+    db = job_context.testing_session()
+    resume = Resume(
+        user_id="user_screening",
+        original_filename="resume.pdf",
+        storage_key="user_screening/resume.pdf",
+        content_type="application/pdf",
+        size_bytes=1024,
+    )
+    db.add(resume)
+    db.flush()
+
+    db.add(AutomationRun(
+        user_id="user_screening",
+        pipeline_type="job_screening",
+        trigger_type="manual",
+        status="running",
+        summary={},
+    ))
+    db.commit()
+    resume_id = resume.id
+    db.close()
+
+    response = job_context.post(
+        "/api/jobs/screen/start",
+        json={"resume_id": resume_id},
+    )
+
+    assert response.status_code == 409
+    assert "already active" in response.json()["detail"]

@@ -14,6 +14,7 @@ from app.models import (
     AutomationRun,
     AutomationTask,
     HimalayasIngestionState,
+    Resume,
 )
 from sqlalchemy.orm import Session
 
@@ -43,6 +44,8 @@ from app.schemas.job import (
     JobSearchResult,
     ResumeJobMatchResult,
     JobScreeningResult,
+    JobScreeningStartRequest,
+    JobScreeningStartResponse,
 )
 from app.schemas.himalayas_ingestion import HimalayasBatchIngestionResult
 from app.services.job_ingestion import (
@@ -795,6 +798,93 @@ def screen_jobs_for_candidate(
         "limit": match_result["limit"],
     }
 
+
+@router.post(
+    "/screen/start",
+    response_model=JobScreeningStartResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    responses={
+        401: {"description": "Authentication is required."},
+        409: {"description": "A screening run is already active."},
+    },
+)
+def start_job_screening(
+    payload: JobScreeningStartRequest,
+    user_id: CurrentUser,
+    db: Session = Depends(get_db),
+):
+    """Queue durable screening of the full job corpus for an owned resume."""
+    resume = db.scalar(
+        select(Resume).where(
+            Resume.id == payload.resume_id,
+            Resume.user_id == user_id,
+        )
+    )
+
+    if resume is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Resume not found",
+        )
+
+    active_run = db.scalar(
+        select(AutomationRun).where(
+            AutomationRun.user_id == user_id,
+            AutomationRun.pipeline_type == "job_screening",
+            AutomationRun.status.in_(["queued", "running"]),
+        )
+    )
+
+    if active_run is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A job-screening run is already active.",
+        )
+
+    run = AutomationRun(
+        user_id=user_id,
+        pipeline_type="job_screening",
+        trigger_type="manual",
+        status="queued",
+        summary={
+            "resume_id": resume.id,
+            "processed_count": 0,
+            "prioritized_count": 0,
+            "review_count": 0,
+            "excluded_count": 0,
+        },
+    )
+    db.add(run)
+
+    try:
+        db.flush()
+
+        task = AutomationTask(
+            run_id=run.id,
+            user_id=user_id,
+            task_type="screen_jobs",
+            status="queued",
+            idempotency_key="screen-jobs",
+            payload={"resume_id": resume.id},
+            attempts=0,
+            max_attempts=3,
+        )
+        db.add(task)
+        db.commit()
+        db.refresh(run)
+        db.refresh(task)
+    except Exception:
+        db.rollback()
+        raise
+
+    return {
+        "run_id": run.id,
+        "task_id": task.id,
+        "pipeline_type": "job_screening",
+        "status": run.status,
+        "task_status": task.status,
+        "resume_id": resume.id,
+    }
 
 @router.get("/{job_id}", response_model=JobRead)
 def get_job(job_id: int, db: Session = Depends(get_db)):
