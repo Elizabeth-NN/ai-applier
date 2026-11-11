@@ -1819,6 +1819,134 @@ const [profileRefreshKey, setProfileRefreshKey] = useState(0);
     };
   }, [isLoaded, isSignedIn, getToken]);
 
+  // Restore an in-progress screening run for this signed-in user.
+  useEffect(() => {
+    if (!isLoaded || !isSignedIn || !user?.id || typeof window === "undefined") {
+      return;
+    }
+
+    const key = `ai-applier:screening-run:${user.id}`;
+    const saved = window.localStorage.getItem(key);
+    if (!saved) return;
+
+    try {
+      const parsed = JSON.parse(saved) as {
+        runId?: number;
+        resumeId?: number;
+      };
+
+      if (
+        !Number.isInteger(parsed.runId) ||
+        !Number.isInteger(parsed.resumeId) ||
+        Number(parsed.runId) < 1 ||
+        Number(parsed.resumeId) < 1
+      ) {
+        window.localStorage.removeItem(key);
+        return;
+      }
+
+      setSelectedResumeId(String(parsed.resumeId));
+      setScreeningRunId(parsed.runId as number);
+      setMatchingLoading(true);
+      setResumeMatchError("");
+      setResumeMatchNotice("Resuming your saved screening run...");
+    } catch {
+      window.localStorage.removeItem(key);
+    }
+  }, [isLoaded, isSignedIn, user?.id]);
+
+  // Poll durable screening status and load the results already persisted by the worker.
+  useEffect(() => {
+    if (!screeningRunId || !isLoaded || !isSignedIn) return;
+
+    let cancelled = false;
+    let timeout: ReturnType<typeof setTimeout>;
+
+    async function pollScreeningRun() {
+      try {
+        const token = await getToken();
+        if (!token) throw new Error("Please sign in again.");
+
+        const status = await apiRequest<JobScreeningRunStatus>(
+          `/api/jobs/screen/runs/${screeningRunId}`,
+          token,
+        );
+
+        if (cancelled) return;
+        setScreeningRunStatus(status);
+
+        const params = new URLSearchParams({
+          skip: "0",
+          limit: "100",
+        });
+        const page = await apiRequest<JobScreeningResultsPage>(
+          `/api/jobs/screen/runs/${screeningRunId}/results?${params.toString()}`,
+          token,
+        );
+
+        if (cancelled) return;
+
+        const resumeId = status.resume_id ?? Number(selectedResumeId);
+        const resumeFilename =
+          resumes.find((resume) => resume.id === resumeId)?.original_filename;
+
+        setResumeMatches({
+          resume_id: resumeId,
+          resume_filename: resumeFilename,
+          items: page.items,
+          total: page.total,
+          skip: page.skip,
+          limit: page.limit,
+        });
+
+        const active = status.status === "queued" || status.status === "running";
+
+        if (active) {
+          setMatchingLoading(true);
+          setResumeMatchNotice(
+            `Screening ${status.processed_count} of ${status.expected_total || "the available"} jobs. ${status.prioritized_count} prioritized, ${status.review_count} for review, ${status.excluded_count} excluded.`,
+          );
+          timeout = setTimeout(pollScreeningRun, 2500);
+          return;
+        }
+
+        setMatchingLoading(false);
+
+        if (typeof window !== "undefined" && user?.id) {
+          window.localStorage.removeItem(
+            `ai-applier:screening-run:${user.id}`,
+          );
+        }
+
+        if (status.status === "succeeded") {
+          setResumeMatchNotice(
+            `Screening complete: ${status.processed_count} jobs processed, ${status.prioritized_count} prioritized, ${status.review_count} for review, and ${status.excluded_count} excluded.`,
+          );
+        } else {
+          setResumeMatchError(
+            status.error_message || `Screening run ended with status: ${status.status}.`,
+          );
+        }
+      } catch (err) {
+        if (cancelled) return;
+
+        setResumeMatchError(
+          err instanceof Error
+            ? err.message
+            : "Could not refresh screening progress. Retrying...",
+        );
+        timeout = setTimeout(pollScreeningRun, 5000);
+      }
+    }
+
+    void pollScreeningRun();
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timeout);
+    };
+  }, [screeningRunId, isLoaded, isSignedIn, getToken, resumes, selectedResumeId, user?.id]);
+
   // Total number of listings, independent of any filters (for the dashboard).
   useEffect(() => {
     if (!isLoaded || !isSignedIn) return;
@@ -3331,6 +3459,84 @@ const [profileRefreshKey, setProfileRefreshKey] = useState(0);
                     <p role="status" className="text-sm text-slate-600">
                       {resumeMatchNotice}
                     </p>
+                  )}
+
+                  {screeningRunStatus && (
+                    <div className="space-y-3 rounded-xl border border-violet-100 bg-violet-50/50 p-4">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-sm font-bold text-slate-900">
+                          Screening progress
+                        </p>
+                        <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold capitalize text-violet-700">
+                          {screeningRunStatus.status}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center justify-between text-sm text-slate-600">
+                        <span>
+                          {screeningRunStatus.processed_count} of{" "}
+                          {screeningRunStatus.expected_total || "—"} jobs processed
+                        </span>
+                        <span className="font-semibold tabular-nums">
+                          {screeningRunStatus.expected_total > 0
+                            ? `${Math.min(
+                                100,
+                                Math.round(
+                                  (screeningRunStatus.processed_count /
+                                    screeningRunStatus.expected_total) *
+                                    100,
+                                ),
+                              )}%`
+                            : "Preparing"}
+                        </span>
+                      </div>
+
+                      <div
+                        className="h-2 overflow-hidden rounded-full bg-violet-100"
+                        role="progressbar"
+                        aria-label="Job screening progress"
+                        aria-valuemin={0}
+                        aria-valuemax={screeningRunStatus.expected_total || 100}
+                        aria-valuenow={screeningRunStatus.processed_count}
+                      >
+                        <div
+                          className="h-full rounded-full bg-violet-600 transition-all duration-500"
+                          style={{
+                            width: `${
+                              screeningRunStatus.expected_total > 0
+                                ? Math.min(
+                                    100,
+                                    (screeningRunStatus.processed_count /
+                                      screeningRunStatus.expected_total) *
+                                      100,
+                                  )
+                                : 0
+                            }%`,
+                          }}
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-3 gap-2 text-center">
+                        <div className="rounded-lg bg-white p-2">
+                          <p className="text-lg font-bold text-emerald-700">
+                            {screeningRunStatus.prioritized_count}
+                          </p>
+                          <p className="text-xs text-slate-500">Prioritized</p>
+                        </div>
+                        <div className="rounded-lg bg-white p-2">
+                          <p className="text-lg font-bold text-amber-700">
+                            {screeningRunStatus.review_count}
+                          </p>
+                          <p className="text-xs text-slate-500">Review</p>
+                        </div>
+                        <div className="rounded-lg bg-white p-2">
+                          <p className="text-lg font-bold text-slate-600">
+                            {screeningRunStatus.excluded_count}
+                          </p>
+                          <p className="text-xs text-slate-500">Excluded</p>
+                        </div>
+                      </div>
+                    </div>
                   )}
 
                   {matchingLoading && resumeMatches && (
