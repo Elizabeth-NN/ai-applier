@@ -144,7 +144,44 @@ type ResumeJobScreening = ResumeJobMatch & {
 
 type ResumeJobMatchResult = {
   resume_id: number;
-  resume_filename: string;
+  resume_filename?: string;
+  items: ResumeJobScreening[];
+  total: number;
+  skip: number;
+  limit: number;
+};
+
+type JobScreeningRunStart = {
+  run_id: number;
+  task_id: number;
+  pipeline_type: "job_screening";
+  status: string;
+  task_status: string;
+  resume_id: number;
+};
+
+type JobScreeningRunStatus = {
+  run_id: number;
+  pipeline_type: "job_screening";
+  status: string;
+  resume_id: number | null;
+  expected_total: number;
+  processed_count: number;
+  prioritized_count: number;
+  review_count: number;
+  excluded_count: number;
+  task_status: string | null;
+  task_attempts: number | null;
+  task_max_attempts: number | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  updated_at: string;
+  error_message: string | null;
+};
+
+type JobScreeningResultsPage = {
+  run_id: number;
   items: ResumeJobScreening[];
   total: number;
   skip: number;
@@ -1604,6 +1641,9 @@ export default function DashboardPage() {
     useState<ResumeJobMatchResult | null>(null);
   const [resumesLoading, setResumesLoading] = useState(false);
   const [matchingLoading, setMatchingLoading] = useState(false);
+  const [screeningRunId, setScreeningRunId] = useState<number | null>(null);
+  const [screeningRunStatus, setScreeningRunStatus] =
+    useState<JobScreeningRunStatus | null>(null);
   const [resumeMatchError, setResumeMatchError] = useState("");
   const [resumeMatchNotice, setResumeMatchNotice] = useState("");
 
@@ -2237,8 +2277,9 @@ const [profileRefreshKey, setProfileRefreshKey] = useState(0);
   }
 
   async function matchJobsToResume() {
-    if (!selectedResumeId || matchingLoading) return;
+    if (!selectedResumeId || matchingLoading || !user?.id) return;
 
+    let runStarted = false;
     setMatchingLoading(true);
     setResumeMatchError("");
     setResumeMatchNotice("");
@@ -2247,28 +2288,36 @@ const [profileRefreshKey, setProfileRefreshKey] = useState(0);
       const token = await getToken();
       if (!token) throw new Error("Please sign in again.");
 
-      const params = new URLSearchParams({
-        resume_id: selectedResumeId,
-        skip: "0",
-        limit: "100",
-      });
-
-      const result = await apiRequest<ResumeJobMatchResult>(
-        `/api/jobs/screen?${params.toString()}`,
+      const result = await apiRequest<JobScreeningRunStart>(
+        "/api/jobs/screen/start",
         token,
+        {
+          method: "POST",
+          body: JSON.stringify({ resume_id: Number(selectedResumeId) }),
+        },
       );
 
-      setResumeMatches(result);
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(
+          `ai-applier:screening-run:${user.id}`,
+          JSON.stringify({
+            runId: result.run_id,
+            resumeId: result.resume_id,
+          }),
+        );
+      }
+
+      runStarted = true;
+      setScreeningRunId(result.run_id);
+      setScreeningRunStatus(null);
       setResumeMatchNotice(
-        result.total === 0
-          ? "No jobs are available to match yet."
-          : `Screened ${result.items.length} of ${result.total} matching jobs against ${result.resume_filename}.`,
+        `Screening run #${result.run_id} has been queued. Results will appear as jobs are processed.`,
       );
     } catch (err) {
       const message =
         err instanceof Error
           ? err.message
-          : "Could not match jobs to your resume.";
+          : "Could not start job screening.";
 
       setResumeMatchError(
         resumeMatches
@@ -2276,7 +2325,7 @@ const [profileRefreshKey, setProfileRefreshKey] = useState(0);
           : message,
       );
     } finally {
-      setMatchingLoading(false);
+      if (!runStarted) setMatchingLoading(false);
     }
   }
 
