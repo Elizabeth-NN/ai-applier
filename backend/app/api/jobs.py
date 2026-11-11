@@ -12,6 +12,7 @@ from sqlalchemy import func, literal, or_, select
 
 from app.models import (
     AutomationRun,
+    AutomationScreeningResult,
     AutomationTask,
     HimalayasIngestionState,
     Resume,
@@ -44,6 +45,9 @@ from app.schemas.job import (
     JobSearchResult,
     ResumeJobMatchResult,
     JobScreeningResult,
+    JobScreeningItem,
+    JobScreeningRunStatus,
+    JobScreeningResultsPage,
     JobScreeningStartRequest,
     JobScreeningStartResponse,
 )
@@ -885,6 +889,119 @@ def start_job_screening(
         "task_status": task.status,
         "resume_id": resume.id,
     }
+
+@router.get(
+    "/screen/runs/{run_id}",
+    response_model=JobScreeningRunStatus,
+)
+def get_job_screening_run(
+    run_id: int,
+    user_id: CurrentUser,
+    db: Session = Depends(get_db),
+):
+    """Return safe progress metadata for the current user's screening run."""
+    run = db.scalar(
+        select(AutomationRun).where(
+            AutomationRun.id == run_id,
+            AutomationRun.user_id == user_id,
+            AutomationRun.pipeline_type == "job_screening",
+        )
+    )
+    if run is None:
+        raise HTTPException(status_code=404, detail="Screening run not found")
+
+    task = db.scalar(
+        select(AutomationTask).where(
+            AutomationTask.run_id == run.id,
+            AutomationTask.user_id == user_id,
+            AutomationTask.task_type == "screen_jobs",
+        )
+    )
+    summary = run.summary or {}
+    failed = run.status == "failed" or (
+        task is not None and task.status == "failed"
+    )
+
+    return {
+        "run_id": run.id,
+        "pipeline_type": "job_screening",
+        "status": run.status,
+        "resume_id": summary.get("resume_id"),
+        "expected_total": summary.get("expected_total", 0),
+        "processed_count": summary.get("processed_count", 0),
+        "prioritized_count": summary.get("prioritized_count", 0),
+        "review_count": summary.get("review_count", 0),
+        "excluded_count": summary.get("excluded_count", 0),
+        "task_status": task.status if task else None,
+        "task_attempts": task.attempts if task else None,
+        "task_max_attempts": task.max_attempts if task else None,
+        "created_at": run.created_at,
+        "started_at": run.started_at,
+        "finished_at": run.finished_at,
+        "updated_at": run.updated_at,
+        "error_message": (
+            "Screening failed. You can retry the run or contact support."
+            if failed else None
+        ),
+    }
+
+
+@router.get(
+    "/screen/runs/{run_id}/results",
+    response_model=JobScreeningResultsPage,
+)
+def get_job_screening_run_results(
+    run_id: int,
+    user_id: CurrentUser,
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=20, ge=1, le=100),
+    db: Session = Depends(get_db),
+):
+    """Return persisted screening snapshots for an owned run."""
+    run = db.scalar(
+        select(AutomationRun).where(
+            AutomationRun.id == run_id,
+            AutomationRun.user_id == user_id,
+            AutomationRun.pipeline_type == "job_screening",
+        )
+    )
+    if run is None:
+        raise HTTPException(status_code=404, detail="Screening run not found")
+
+    filters = [
+        AutomationScreeningResult.run_id == run.id,
+        AutomationScreeningResult.user_id == user_id,
+    ]
+    resume_id = (run.summary or {}).get("resume_id")
+    if isinstance(resume_id, int) and not isinstance(resume_id, bool):
+        filters.append(AutomationScreeningResult.resume_id == resume_id)
+
+    total = db.scalar(
+        select(func.count())
+        .select_from(AutomationScreeningResult)
+        .where(*filters)
+    ) or 0
+
+    rows = db.scalars(
+        select(AutomationScreeningResult)
+        .where(*filters)
+        .order_by(AutomationScreeningResult.id.asc())
+        .offset(skip)
+        .limit(limit)
+    ).all()
+
+    items = [
+        JobScreeningItem.model_validate(row.result)
+        for row in rows
+    ]
+    return {
+        "run_id": run.id,
+        "items": items,
+        "total": total,
+        "skip": skip,
+        "limit": limit,
+    }
+
 
 @router.get("/{job_id}", response_model=JobRead)
 def get_job(job_id: int, db: Session = Depends(get_db)):
