@@ -143,6 +143,7 @@ type ResumeJobScreening = ResumeJobMatch & {
 };
 
 type ResumeJobMatchResult = {
+  run_id?: number;
   resume_id: number;
   resume_filename?: string;
   items: ResumeJobScreening[];
@@ -1644,6 +1645,8 @@ export default function DashboardPage() {
   const [screeningRunId, setScreeningRunId] = useState<number | null>(null);
   const [screeningRunStatus, setScreeningRunStatus] =
     useState<JobScreeningRunStatus | null>(null);
+  const [screeningResultsLoading, setScreeningResultsLoading] =
+    useState(false);
   const [resumeMatchError, setResumeMatchError] = useState("");
   const [resumeMatchNotice, setResumeMatchNotice] = useState("");
 
@@ -1845,11 +1848,15 @@ const [profileRefreshKey, setProfileRefreshKey] = useState(0);
         return;
       }
 
-      setSelectedResumeId(String(parsed.resumeId));
-      setScreeningRunId(parsed.runId as number);
-      setMatchingLoading(true);
-      setResumeMatchError("");
-      setResumeMatchNotice("Resuming your saved screening run...");
+      const restoreTimeout = window.setTimeout(() => {
+        setSelectedResumeId(String(parsed.resumeId));
+        setScreeningRunId(parsed.runId as number);
+        setMatchingLoading(true);
+        setResumeMatchError("");
+        setResumeMatchNotice("Resuming your saved screening run...");
+      }, 0);
+
+      return () => window.clearTimeout(restoreTimeout);
     } catch {
       window.localStorage.removeItem(key);
     }
@@ -1890,13 +1897,28 @@ const [profileRefreshKey, setProfileRefreshKey] = useState(0);
         const resumeFilename =
           resumes.find((resume) => resume.id === resumeId)?.original_filename;
 
-        setResumeMatches({
-          resume_id: resumeId,
-          resume_filename: resumeFilename,
-          items: page.items,
-          total: page.total,
-          skip: page.skip,
-          limit: page.limit,
+        setResumeMatches((current) => {
+          const existingItems =
+            current?.run_id === page.run_id ? current.items : [];
+          const mergedItems = new Map(
+            existingItems.map((item) => [item.id, item]),
+          );
+
+          for (const item of page.items) {
+            mergedItems.set(item.id, item);
+          }
+
+          return {
+            run_id: page.run_id,
+            resume_id: resumeId,
+            resume_filename: resumeFilename,
+            items: Array.from(mergedItems.values()).sort(
+              (a, b) => a.id - b.id,
+            ),
+            total: page.total,
+            skip: 0,
+            limit: page.limit,
+          };
         });
 
         const active = status.status === "queued" || status.status === "running";
@@ -2454,6 +2476,57 @@ const [profileRefreshKey, setProfileRefreshKey] = useState(0);
       );
     } finally {
       if (!runStarted) setMatchingLoading(false);
+    }
+  }
+
+  async function loadMoreScreeningResults() {
+    if (
+      !screeningRunId ||
+      !resumeMatches ||
+      resumeMatches.run_id !== screeningRunId ||
+      screeningResultsLoading ||
+      resumeMatches.items.length >= resumeMatches.total
+    ) return;
+
+    setScreeningResultsLoading(true);
+    setResumeMatchError("");
+
+    try {
+      const token = await getToken();
+      if (!token) throw new Error("Please sign in again.");
+
+      const params = new URLSearchParams({
+        skip: String(resumeMatches.items.length),
+        limit: "100",
+      });
+      const page = await apiRequest<JobScreeningResultsPage>(
+        `/api/jobs/screen/runs/${screeningRunId}/results?${params.toString()}`,
+        token,
+      );
+
+      setResumeMatches((current) => {
+        if (!current || current.run_id !== page.run_id) return current;
+        const knownIds = new Set(current.items.map((item) => item.id));
+
+        return {
+          ...current,
+          items: [
+            ...current.items,
+            ...page.items.filter((item) => !knownIds.has(item.id)),
+          ],
+          total: page.total,
+          skip: 0,
+          limit: page.limit,
+        };
+      });
+    } catch (err) {
+      setResumeMatchError(
+        err instanceof Error
+          ? err.message
+          : "Could not load more screening results.",
+      );
+    } finally {
+      setScreeningResultsLoading(false);
     }
   }
 
@@ -3576,6 +3649,22 @@ const [profileRefreshKey, setProfileRefreshKey] = useState(0);
                           onMarkApplied={(id) => void changeStatus(id, "applied")}
                         />
                       ))}
+
+                      {screeningRunId === resumeMatches.run_id &&
+                        resumeMatches.items.length < resumeMatches.total && (
+                          <div className="flex justify-center pt-2">
+                            <button
+                              type="button"
+                              onClick={() => void loadMoreScreeningResults()}
+                              disabled={screeningResultsLoading}
+                              className="rounded-xl border border-violet-200 bg-white px-5 py-2.5 text-sm font-semibold text-violet-700 transition hover:bg-violet-50 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              {screeningResultsLoading
+                                ? "Loading more jobs..."
+                                : `Load more results (${resumeMatches.total - resumeMatches.items.length} remaining)`}
+                            </button>
+                          </div>
+                        )}
                     </div>
                   )}
                 </section>
