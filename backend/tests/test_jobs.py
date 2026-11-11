@@ -1759,3 +1759,168 @@ def test_screening_start_rejects_second_active_run(job_context):
 
     assert response.status_code == 409
     assert "already active" in response.json()["detail"]
+
+
+def create_screening_run_with_results(job_context, user_id="user_screening"):
+    from app.models import (
+        AutomationRun,
+        AutomationScreeningResult,
+        AutomationTask,
+        Resume,
+    )
+    from app.schemas.job import JobRead
+
+    db = job_context.testing_session()
+    try:
+        resume = Resume(
+            user_id=user_id,
+            original_filename="resume.pdf",
+            storage_key=f"{user_id}/resume.pdf",
+            content_type="application/pdf",
+            size_bytes=1024,
+        )
+        db.add(resume)
+        db.flush()
+
+        jobs = []
+        for index in range(2):
+            payload = valid_job()
+            payload["title"] = f"Junior Python Developer {index}"
+            response = job_context.post("/api/jobs", json=payload)
+            assert response.status_code == 201
+            jobs.append(db.get(Job, response.json()["id"]))
+
+        run = AutomationRun(
+            user_id=user_id,
+            pipeline_type="job_screening",
+            trigger_type="manual",
+            status="running",
+            summary={
+                "resume_id": resume.id,
+                "expected_total": 2,
+                "processed_count": 2,
+                "prioritized_count": 1,
+                "review_count": 1,
+                "excluded_count": 0,
+            },
+        )
+        db.add(run)
+        db.flush()
+
+        task = AutomationTask(
+            run_id=run.id,
+            user_id=user_id,
+            task_type="screen_jobs",
+            status="running",
+            idempotency_key="screen-jobs",
+            payload={"resume_id": resume.id},
+            attempts=1,
+            max_attempts=3,
+        )
+        db.add(task)
+        db.flush()
+
+        for job in jobs:
+            result = JobRead.model_validate(job).model_dump(mode="json")
+            result.update({
+                "match_score": 75,
+                "matched_terms": ["python"],
+                "terms_not_found_in_resume": [],
+                "required_terms_found": ["python"],
+                "required_terms_not_found": [],
+                "preferred_terms_found": [],
+                "preferred_terms_not_found": [],
+                "term_evidence": {"python": ["Python development"]},
+                "match_reasons": ["Python appears in the description."],
+                "profile_match_score": None,
+                "recommendation": "review",
+                "role_alignment": "aligned",
+                "role_relevance_score": 75,
+                "role_relevance_reasons": [],
+                "experience_level": "junior",
+                "experience_fit": "aligned",
+                "remote_fit": "aligned",
+                "employment_fit": "aligned",
+                "kenya_eligibility": "unknown",
+                "listing_status": "unknown",
+                "reasons": ["Eligibility needs review."],
+            })
+            db.add(AutomationScreeningResult(
+                run_id=run.id,
+                user_id=user_id,
+                resume_id=resume.id,
+                job_id=job.id,
+                result=result,
+            ))
+
+        db.commit()
+        return run.id
+    finally:
+        db.close()
+
+
+def test_screening_run_status_returns_owned_progress_and_task(
+    job_context,
+):
+    app.dependency_overrides[require_user] = lambda: "user_screening"
+    run_id = create_screening_run_with_results(job_context)
+
+    response = job_context.get(f"/api/jobs/screen/runs/{run_id}")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["run_id"] == run_id
+    assert data["pipeline_type"] == "job_screening"
+    assert data["status"] == "running"
+    assert data["expected_total"] == 2
+    assert data["processed_count"] == 2
+    assert data["prioritized_count"] == 1
+    assert data["review_count"] == 1
+    assert data["excluded_count"] == 0
+    assert data["task_status"] == "running"
+    assert data["task_attempts"] == 1
+    assert data["task_max_attempts"] == 3
+    assert data["error_message"] is None
+
+
+def test_screening_run_results_support_pagination(job_context):
+    app.dependency_overrides[require_user] = lambda: "user_screening"
+    run_id = create_screening_run_with_results(job_context)
+
+    first = job_context.get(
+        f"/api/jobs/screen/runs/{run_id}/results?skip=0&limit=1"
+    )
+    second = job_context.get(
+        f"/api/jobs/screen/runs/{run_id}/results?skip=1&limit=1"
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["total"] == 2
+    assert second.json()["total"] == 2
+    assert first.json()["skip"] == 0
+    assert second.json()["skip"] == 1
+    assert first.json()["limit"] == 1
+    assert second.json()["limit"] == 1
+    assert len(first.json()["items"]) == 1
+    assert len(second.json()["items"]) == 1
+    assert first.json()["items"][0]["id"] != second.json()["items"][0]["id"]
+    assert first.json()["items"][0]["recommendation"] == "review"
+
+
+def test_screening_run_and_results_are_hidden_from_other_users(
+    job_context,
+):
+    run_id = create_screening_run_with_results(job_context)
+
+    app.dependency_overrides[require_user] = lambda: "another_user"
+
+    status_response = job_context.get(
+        f"/api/jobs/screen/runs/{run_id}"
+    )
+    results_response = job_context.get(
+        f"/api/jobs/screen/runs/{run_id}/results"
+    )
+
+    assert status_response.status_code == 404
+    assert results_response.status_code == 404
