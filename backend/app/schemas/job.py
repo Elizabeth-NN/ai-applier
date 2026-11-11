@@ -196,6 +196,38 @@ class JobScreeningResult(BaseModel):
     limit: int
 
 
+class JobScreeningRunStatus(BaseModel):
+    """Safe progress information for an owned durable screening run."""
+
+    run_id: int
+    pipeline_type: Literal["job_screening"]
+    status: str
+    resume_id: int | None = None
+    expected_total: int = 0
+    processed_count: int = 0
+    prioritized_count: int = 0
+    review_count: int = 0
+    excluded_count: int = 0
+    task_status: str | None = None
+    task_attempts: int | None = None
+    task_max_attempts: int | None = None
+    created_at: datetime
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    updated_at: datetime
+    error_message: str | None = None
+
+
+class JobScreeningResultsPage(BaseModel):
+    """A page of persisted screening snapshots for one run."""
+
+    run_id: int
+    items: list[JobScreeningItem]
+    total: int
+    skip: int
+    limit: int
+
+
 class EligibilityVerificationRequest(BaseModel):
     """Evidence-backed verification of a job's eligibility in Kenya."""
 
