@@ -118,3 +118,128 @@ def prepare_durable_screening_context(
         "has_profile_evidence": has_profile_evidence,
         "term_weights": term_weights,
     }
+def score_durable_screening_batch(
+    db: Session,
+    *,
+    context: Mapping[str, Any],
+    last_job_id: int = 0,
+    batch_size: int = 100,
+) -> list[dict[str, Any]]:
+    """Score the next batch using shared corpus-wide matching weights."""
+
+    statement = (
+        select(Job)
+        .where(
+            Job.id > last_job_id,
+            Job.id <= context["max_job_id"],
+        )
+        .order_by(Job.id.asc())
+        .limit(batch_size)
+    )
+
+    jobs = db.scalars(statement).all()
+    scored_items: list[dict[str, Any]] = []
+
+    for job in jobs:
+        match = score_resume_job_match(
+            "",
+            title=job.title,
+            description=job.description,
+            company=job.company,
+            prepared_resume_features=context["resume_features"],
+            term_weights=context["term_weights"],
+        )
+
+        match["term_evidence"] = build_requirement_term_evidence(
+            job.description,
+            context["resume_section_features"],
+            company=job.company,
+        )
+
+        if context["has_profile_evidence"]:
+            profile_match = score_resume_job_match(
+                "",
+                title=job.title,
+                description=job.description,
+                company=job.company,
+                prepared_resume_features=context["combined_features"],
+                term_weights=context["term_weights"],
+            )
+
+            matched_terms = profile_match.get("matched_terms", [])
+            required_terms = profile_match.get(
+                "required_terms_found",
+                [],
+            )
+            preferred_terms = profile_match.get(
+                "preferred_terms_found",
+                [],
+            )
+
+            profile_matched_terms = classify_match_terms(
+                matched_terms,
+                context["resume_features"],
+                context["profile_features"],
+            )
+            required_classification = classify_match_terms(
+                required_terms,
+                context["resume_features"],
+                context["profile_features"],
+            )
+            preferred_classification = classify_match_terms(
+                preferred_terms,
+                context["resume_features"],
+                context["profile_features"],
+            )
+
+            match.update(
+                {
+                    "profile_match_score": profile_match["match_score"],
+                    "profile_matched_terms":profile_matched_terms["profile"],
+                    "profile_only_matched_terms": profile_matched_terms["profile_only"],
+                    "terms_not_found_in_resume_or_profile": (
+                        profile_match["terms_not_found_in_resume"]
+                    ),
+                    "required_terms_found_in_profile": (
+                        required_classification["profile"]
+                    ),
+                    "required_terms_found_in_resume_or_profile": (
+                        required_terms
+                    ),
+                    "required_terms_not_found_in_resume_or_profile": (
+                        profile_match["required_terms_not_found"]
+                    ),
+                    "preferred_terms_found_in_profile": (
+                        preferred_classification["profile"]
+                    ),
+                    "preferred_terms_found_in_resume_or_profile": (
+                        preferred_terms
+                    ),
+                    "preferred_terms_not_found_in_resume_or_profile": (
+                        profile_match["preferred_terms_not_found"]
+                    ),
+                    "profile_term_evidence": build_requirement_term_evidence(
+                        job.description,
+                        context["profile_section_features"],
+                        company=job.company,
+                        section_names=PROFILE_EVIDENCE_SECTIONS,
+                    ),
+                    "profile_match_reasons": profile_match.get(
+                        "match_reasons",
+                        [],
+                    ),
+                }
+            )
+
+        from app.schemas.job import JobRead
+
+        job_data = JobRead.model_validate(job).model_dump(mode="json")
+
+        scored_items.append(
+            {
+                **job_data,
+                **match,
+            }
+        )
+
+    return scored_items
