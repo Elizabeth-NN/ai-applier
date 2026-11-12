@@ -52,12 +52,13 @@ def save_screening_results(
     if len(job_ids) != len(set(job_ids)):
         raise ValueError("A batch cannot contain duplicate job results.")
 
-    existing_jobs = set(
-        db.scalars(
-            select(Job.id).where(Job.id.in_(job_ids))
+    jobs_by_id = {
+        job.id: job
+        for job in db.scalars(
+            select(Job).where(Job.id.in_(job_ids))
         ).all()
-    )
-    missing_jobs = set(job_ids) - existing_jobs
+    }
+    missing_jobs = set(job_ids) - set(jobs_by_id)
 
     if missing_jobs:
         raise ValueError(
@@ -78,6 +79,32 @@ def save_screening_results(
 
     try:
         for result, job_id in zip(results, job_ids):
+            match_score = result.get("match_score")
+            profile_match_score = result.get("profile_match_score")
+
+            if (
+                not isinstance(match_score, int)
+                or isinstance(match_score, bool)
+                or not 0 <= match_score <= 100
+            ):
+                raise ValueError("Screening result has an invalid match score.")
+
+            if profile_match_score is not None and (
+                not isinstance(profile_match_score, int)
+                or isinstance(profile_match_score, bool)
+                or not 0 <= profile_match_score <= 100
+            ):
+                raise ValueError(
+                    "Screening result has an invalid profile match score."
+                )
+
+            ranking_score = (
+                profile_match_score
+                if profile_match_score is not None
+                else match_score
+            )
+            job_created_at = jobs_by_id[job_id].created_at
+
             existing = existing_results.get(job_id)
 
             if existing is not None:
@@ -90,6 +117,9 @@ def save_screening_results(
                     )
 
                 existing.result = result
+                existing.ranking_score = ranking_score
+                existing.match_score = match_score
+                existing.job_created_at = job_created_at
             else:
                 db.add(
                     AutomationScreeningResult(
@@ -98,6 +128,9 @@ def save_screening_results(
                         resume_id=resume_id,
                         job_id=job_id,
                         result=result,
+                        ranking_score=ranking_score,
+                        match_score=match_score,
+                        job_created_at=job_created_at,
                     )
                 )
 

@@ -60,6 +60,20 @@ class AutomationScreeningResult(Base):
         JSON,
         nullable=False,
     )
+    ranking_score: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+    )
+
+    match_score: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+    )
+
+    job_created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
