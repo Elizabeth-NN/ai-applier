@@ -985,7 +985,12 @@ def get_job_screening_run_results(
     rows = db.scalars(
         select(AutomationScreeningResult)
         .where(*filters)
-        .order_by(AutomationScreeningResult.id.asc())
+        .order_by(
+            AutomationScreeningResult.ranking_score.desc(),
+            AutomationScreeningResult.match_score.desc(),
+            AutomationScreeningResult.job_created_at.desc(),
+            AutomationScreeningResult.job_id.desc(),
+        )
         .offset(skip)
         .limit(limit)
     ).all()

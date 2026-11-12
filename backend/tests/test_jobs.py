@@ -1851,6 +1851,9 @@ def create_screening_run_with_results(job_context, user_id="user_screening"):
                 resume_id=resume.id,
                 job_id=job.id,
                 result=result,
+                ranking_score=75,
+                match_score=75,
+                job_created_at=job.created_at,
             ))
 
         db.commit()

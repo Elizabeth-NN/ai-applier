@@ -78,7 +78,7 @@ def test_screening_result_persists_complete_json_snapshot(db):
         "id": job.id,
         "title": job.title,
         "company": job.company,
-        "match_score": 82.5,
+        "match_score": 82,
         "recommendation": "prioritize",
         "kenya_eligibility": "unknown",
         "listing_status": "active",
@@ -91,6 +91,9 @@ def test_screening_result_persists_complete_json_snapshot(db):
         resume_id=resume.id,
         job_id=job.id,
         result=snapshot,
+        ranking_score=82,
+        match_score=82,
+        job_created_at=job.created_at,
     )
 
     db.add(result)
@@ -116,6 +119,9 @@ def test_screening_result_rejects_duplicate_job_in_same_run(db):
         resume_id=resume.id,
         job_id=job.id,
         result={"recommendation": "prioritize"},
+        ranking_score=50,
+        match_score=50,
+        job_created_at=job.created_at,
     )
 
     second = AutomationScreeningResult(
@@ -124,6 +130,9 @@ def test_screening_result_rejects_duplicate_job_in_same_run(db):
         resume_id=resume.id,
         job_id=job.id,
         result={"recommendation": "review"},
+        ranking_score=50,
+        match_score=50,
+        job_created_at=job.created_at,
     )
 
     db.add(first)
@@ -163,6 +172,9 @@ def test_same_job_can_have_result_in_a_later_run(db):
             resume_id=resume.id,
             job_id=job.id,
             result={"recommendation": "review"},
+            ranking_score=50,
+            match_score=50,
+            job_created_at=job.created_at,
         ),
         AutomationScreeningResult(
             run_id=second_run.id,
@@ -170,6 +182,9 @@ def test_same_job_can_have_result_in_a_later_run(db):
             resume_id=resume.id,
             job_id=job.id,
             result={"recommendation": "prioritize"},
+            ranking_score=50,
+            match_score=50,
+            job_created_at=job.created_at,
         ),
     ])
     db.commit()
@@ -251,8 +266,18 @@ def test_save_screening_results_is_idempotent_for_existing_run_job(db):
 
     run, resume, job = create_records(db)
 
-    first = {"id": job.id, "recommendation": "review"}
-    updated = {"id": job.id, "recommendation": "prioritize"}
+    first = {
+        "id": job.id,
+        "match_score": 60,
+        "profile_match_score": None,
+        "recommendation": "review",
+    }
+    updated = {
+        "id": job.id,
+        "match_score": 70,
+        "profile_match_score": 85,
+        "recommendation": "prioritize",
+    }
 
     assert save_screening_results(
         db,
@@ -272,4 +297,7 @@ def test_save_screening_results_is_idempotent_for_existing_run_job(db):
 
     stored = db.query(AutomationScreeningResult).one()
     assert stored.result == updated
+    assert stored.ranking_score == 85
+    assert stored.match_score == 70
+    assert stored.job_created_at == job.created_at
     assert db.query(AutomationScreeningResult).count() == 1
