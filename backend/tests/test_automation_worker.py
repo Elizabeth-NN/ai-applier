@@ -12,12 +12,20 @@ from app.models import (
     HimalayasIngestionState,
     Job,
     Resume,
+    CandidateProfile,
 )
 from app.schemas.job import JobRead
 from app.services.automation_queue import (
     create_automation_run,
     enqueue_automation_task,
 )
+from app.services.durable_job_screening import (
+    prepare_durable_screening_context,
+)
+from app.services.durable_job_screening import (
+    score_durable_screening_batch,
+)
+from app.services.resume_job_matching import prepare_resume_features
 from app.workers import automation_worker
 from app.workers.automation_worker import process_screening_task
 
@@ -522,3 +530,73 @@ def test_himalayas_worker_does_not_enqueue_successor_when_complete(
     assert run.summary["pages_fetched"] == 3
     assert run.summary["fetched"] == 47
     assert run.summary["completed"] is True
+
+def test_durable_screening_scores_jobs_in_id_order_and_respects_batch_size(db):
+    run, task, resume, jobs = create_screening_task(db, job_count=3)
+
+    context = {
+        "max_job_id": max(job.id for job in jobs),
+        "resume_features": prepare_resume_features("Python FastAPI"),
+        "resume_section_features": {},
+        "has_profile_evidence": False,
+        "term_weights": {},
+    }
+
+    first_batch = score_durable_screening_batch(
+        db,
+        context=context,
+        last_job_id=0,
+        batch_size=2,
+    )
+
+    assert len(first_batch) == 2
+    assert [item["id"] for item in first_batch] == [
+        jobs[0].id,
+        jobs[1].id,
+    ]
+
+    second_batch = score_durable_screening_batch(
+        db,
+        context=context,
+        last_job_id=first_batch[-1]["id"],
+        batch_size=2,
+    )
+
+    assert len(second_batch) == 1
+    assert second_batch[0]["id"] == jobs[2].id
+    assert second_batch[0]["match_score"] >= 0
+    assert second_batch[0]["match_score"] <= 100
+
+def test_durable_screening_includes_profile_evidence(db):
+    run, task, resume, jobs = create_screening_task(
+        db,
+        job_count=1,
+    )
+
+    resume_features = prepare_resume_features("Python FastAPI")
+    profile_features = prepare_resume_features("React")
+
+    context = {
+        "max_job_id": jobs[0].id,
+        "resume_features": resume_features,
+        "resume_section_features": {},
+        "profile_section_features": {
+            "skills": profile_features,
+        },
+        "profile_features": profile_features,
+        "combined_features": resume_features | profile_features,
+        "has_profile_evidence": True,
+        "term_weights": {},
+    }
+
+    items = score_durable_screening_batch(
+        db,
+        context=context,
+        batch_size=10,
+    )
+
+    assert len(items) == 1
+    assert items[0]["profile_match_score"] is not None
+    assert "profile_matched_terms" in items[0]
+    assert "profile_only_matched_terms" in items[0]
+    assert "profile_term_evidence" in items[0]

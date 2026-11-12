@@ -22,6 +22,8 @@ from app.services.resume_job_matching import (
     prepare_resume_section_features,
     score_resume_job_match,
 )
+from app.schemas.job import JobRead
+
 def prepare_durable_screening_context(
     db: Session,
     *,
@@ -118,6 +120,8 @@ def prepare_durable_screening_context(
         "has_profile_evidence": has_profile_evidence,
         "term_weights": term_weights,
     }
+
+
 def score_durable_screening_batch(
     db: Session,
     *,
@@ -224,14 +228,10 @@ def score_durable_screening_batch(
                         company=job.company,
                         section_names=PROFILE_EVIDENCE_SECTIONS,
                     ),
-                    "profile_match_reasons": profile_match.get(
-                        "match_reasons",
-                        [],
-                    ),
+                    "profile_match_reasons": profile_match["match_reasons"],
                 }
             )
 
-        from app.schemas.job import JobRead
 
         job_data = JobRead.model_validate(job).model_dump(mode="json")
 
