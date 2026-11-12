@@ -23,8 +23,8 @@ logger = logging.getLogger(__name__)
 
 POLL_SECONDS = 3
 RECOVERY_INTERVAL_SECONDS = 30
-LEASE_SECONDS = 180
-HEARTBEAT_SECONDS = 45
+LEASE_SECONDS = 300
+HEARTBEAT_SECONDS = 30
 
 
 def _utc_now() -> datetime:
