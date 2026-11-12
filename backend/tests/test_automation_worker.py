@@ -120,7 +120,6 @@ def make_match_item(job):
 
     return item
 
-
 def test_screening_worker_persists_results_and_updates_run_summary(
     db,
     monkeypatch,
@@ -128,24 +127,42 @@ def test_screening_worker_persists_results_and_updates_run_summary(
     run, task, resume, jobs = create_screening_task(db)
 
     items = [make_match_item(job) for job in jobs]
-    matcher_calls = []
+    context_calls = []
+    batch_calls = []
 
-    def fake_matcher(*, user_id, resume_id, skip, limit, db):
-        matcher_calls.append({
+    def fake_prepare(db, *, user_id, resume_id, max_job_id):
+        context_calls.append({
             "user_id": user_id,
             "resume_id": resume_id,
-            "skip": skip,
-            "limit": limit,
+            "max_job_id": max_job_id,
         })
-
         return {
-            "items": items[skip:skip + limit],
-            "total": len(items),
+            "expected_total": len(jobs),
+            "max_job_id": max(job.id for job in jobs),
+            "profile_data": {
+                "target_roles": [],
+                "work_preferences": {},
+            },
         }
 
+    def fake_score(db, *, context, last_job_id, batch_size):
+        batch_calls.append({
+            "last_job_id": last_job_id,
+            "batch_size": batch_size,
+        })
+
+        return [
+            item for item in items
+            if item["id"] > last_job_id
+        ][:1]
+
     monkeypatch.setattr(
-        "app.api.jobs.match_jobs_to_resume",
-        fake_matcher,
+        "app.services.durable_job_screening.prepare_durable_screening_context",
+        fake_prepare,
+    )
+    monkeypatch.setattr(
+        "app.services.durable_job_screening.score_durable_screening_batch",
+        fake_score,
     )
 
     result = process_screening_task(
@@ -163,9 +180,16 @@ def test_screening_worker_persists_results_and_updates_run_summary(
         "excluded_count": 0,
     }
 
-    assert len(matcher_calls) == 1
-    assert matcher_calls[0]["skip"] == 0
-    assert matcher_calls[0]["limit"] == 100
+    assert len(context_calls) == 1
+    assert context_calls[0]["user_id"] == "user-1"
+    assert context_calls[0]["resume_id"] == resume.id
+
+    assert [call["last_job_id"] for call in batch_calls] == [
+        0,
+        jobs[0].id,
+        jobs[1].id,
+    ]
+    assert all(call["batch_size"] == 100 for call in batch_calls)
 
     saved = db.scalars(
         select(AutomationScreeningResult).where(
@@ -191,7 +215,97 @@ def test_screening_worker_persists_results_and_updates_run_summary(
     assert run.summary["expected_total"] == 2
     assert run.summary["processed_count"] == 2
     assert run.summary["review_count"] == 2
+    assert run.summary["phase"] == "completed"
 
+def test_screening_worker_resumes_after_persisted_results(
+    db,
+    monkeypatch,
+):
+    run, task, resume, jobs = create_screening_task(db, job_count=3)
+
+    # Simulate a result persisted by an earlier worker attempt.
+    db.add(
+        AutomationScreeningResult(
+            run_id=run.id,
+            user_id="user-1",
+            resume_id=resume.id,
+            job_id=jobs[0].id,
+            result={
+                "recommendation": "prioritize",
+                "match_score": 90,
+            },
+            ranking_score=90,
+            match_score=90,
+            job_created_at=jobs[0].created_at,
+        )
+    )
+    db.commit()
+
+    context_calls = []
+    batch_calls = []
+    remaining_items = [make_match_item(job) for job in jobs[1:]]
+
+    def fake_prepare(db, *, user_id, resume_id, max_job_id):
+        context_calls.append(max_job_id)
+        return {
+            "expected_total": 3,
+            "max_job_id": max_job_id,
+            "profile_data": {
+                "target_roles": [],
+                "work_preferences": {},
+            },
+        }
+
+    def fake_score(db, *, context, last_job_id, batch_size):
+        batch_calls.append(last_job_id)
+        return [
+            item for item in remaining_items
+            if item["id"] > last_job_id
+        ][:batch_size]
+
+    monkeypatch.setattr(
+        "app.services.durable_job_screening.prepare_durable_screening_context",
+        fake_prepare,
+    )
+    monkeypatch.setattr(
+        "app.services.durable_job_screening.score_durable_screening_batch",
+        fake_score,
+    )
+
+    result = process_screening_task(
+        db,
+        task.id,
+        worker_id="worker-1",
+    )
+
+    assert result == {
+        "resume_id": resume.id,
+        "total": 3,
+        "processed_count": 3,
+        "prioritized_count": 1,
+        "review_count": 2,
+        "excluded_count": 0,
+    }
+
+    assert len(context_calls) == 1
+    assert batch_calls == [jobs[0].id, jobs[2].id]
+
+    saved = db.scalars(
+        select(AutomationScreeningResult).where(
+            AutomationScreeningResult.run_id == run.id
+        )
+    ).all()
+
+    assert len(saved) == 3
+    assert {row.job_id for row in saved} == {
+        job.id for job in jobs
+    }
+
+    db.refresh(run)
+    assert run.summary["processed_count"] == 3
+    assert run.summary["prioritized_count"] == 1
+    assert run.summary["review_count"] == 2
+    assert run.summary["last_job_id"] == jobs[2].id
 
 def test_screening_worker_does_not_save_page_after_lease_is_lost(
     db,
@@ -200,17 +314,27 @@ def test_screening_worker_does_not_save_page_after_lease_is_lost(
     run, task, resume, jobs = create_screening_task(db, job_count=1)
     lease_lost = threading.Event()
 
-    def fake_matcher(*, user_id, resume_id, skip, limit, db):
-        lease_lost.set()
-
+    def fake_prepare(db, *, user_id, resume_id, max_job_id):
         return {
-            "items": [make_match_item(jobs[0])],
-            "total": 1,
+            "expected_total": 1,
+            "max_job_id": jobs[0].id,
+            "profile_data": {
+                "target_roles": [],
+                "work_preferences": {},
+            },
         }
 
+    def fake_score(db, *, context, last_job_id, batch_size):
+        lease_lost.set()
+        return [make_match_item(jobs[0])]
+
     monkeypatch.setattr(
-        "app.api.jobs.match_jobs_to_resume",
-        fake_matcher,
+        "app.services.durable_job_screening.prepare_durable_screening_context",
+        fake_prepare,
+    )
+    monkeypatch.setattr(
+        "app.services.durable_job_screening.score_durable_screening_batch",
+        fake_score,
     )
 
     with pytest.raises(RuntimeError, match="lease was lost"):
