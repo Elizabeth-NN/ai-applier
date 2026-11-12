@@ -29,6 +29,7 @@ def prepare_durable_screening_context(
     *,
     user_id: str,
     resume_id: int,
+    max_job_id: int | None = None,
 ) -> dict[str, Any]:
     """Prepare shared resume and corpus data for durable job screening."""
 
@@ -82,7 +83,14 @@ def prepare_durable_screening_context(
 
     has_profile_evidence = bool(profile_features)
 
-    max_job_id = db.scalar(select(func.max(Job.id))) or 0
+    if max_job_id is None:
+        max_job_id = db.scalar(select(func.max(Job.id))) or 0
+    elif (
+        isinstance(max_job_id, bool)
+        or not isinstance(max_job_id, int)
+        or max_job_id < 0
+    ):
+        raise ValueError("max_job_id must be a non-negative integer.")
 
     expected_total = db.scalar(
         select(func.count(Job.id)).where(Job.id <= max_job_id)
@@ -120,7 +128,6 @@ def prepare_durable_screening_context(
         "has_profile_evidence": has_profile_evidence,
         "term_weights": term_weights,
     }
-
 
 def score_durable_screening_batch(
     db: Session,

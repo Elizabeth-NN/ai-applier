@@ -6,7 +6,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.db.session import SessionLocal
@@ -40,16 +40,22 @@ def process_screening_task(
     lease_lost: threading.Event | None = None,
 ) -> dict:
     """Screen all jobs against the user's selected resume and persist results."""
-    from app.api.jobs import match_jobs_to_resume
     from app.models import (
         AutomationRun,
+        AutomationScreeningResult,
         AutomationTask,
         CandidateProfile,
+        Job,
         Resume,
     )
     from app.schemas.job import JobScreeningItem
     from app.services.automation_screening import save_screening_results
     from app.services.job_screening import screen_job
+
+    from app.services.durable_job_screening import (
+        prepare_durable_screening_context,
+        score_durable_screening_batch,
+    )
 
     task = db.get(AutomationTask, task_id)
     if task is None or task.status != "running":
@@ -92,46 +98,98 @@ def process_screening_task(
 
     run.status = "running"
     if run.started_at is None:
-        from datetime import datetime, timezone
-        run.started_at = datetime.now(timezone.utc)
+        run.started_at = _utc_now()
 
     summary = dict(run.summary or {})
-    summary.update({
-        "resume_id": resume_id,
-        "processed_count": 0,
-        "prioritized_count": 0,
-        "review_count": 0,
-        "excluded_count": 0,
-    })
+    corpus_max_job_id = summary.get("corpus_max_job_id")
+
+    if corpus_max_job_id is None:
+        corpus_max_job_id = db.scalar(select(func.max(Job.id))) or 0
+        summary["corpus_max_job_id"] = corpus_max_job_id
+    elif (
+        isinstance(corpus_max_job_id, bool)
+        or not isinstance(corpus_max_job_id, int)
+        or corpus_max_job_id < 0
+    ):
+        raise ValueError("Stored corpus_max_job_id is invalid.")
+
+    summary["phase"] = "preparing_corpus"
+    summary["resume_id"] = resume_id
     run.summary = summary
     db.commit()
 
-    skip = 0
-    processed = 0
+    if lease_lost is not None and lease_lost.is_set():
+        raise RuntimeError("Task lease was lost before corpus preparation.")
+
+    context = prepare_durable_screening_context(
+        db,
+        user_id=task.user_id,
+        resume_id=resume_id,
+        max_job_id=corpus_max_job_id,
+    )
+
+    if lease_lost is not None and lease_lost.is_set():
+        raise RuntimeError("Task lease was lost during corpus preparation.")
+
+    expected_total = context["expected_total"]
+
+    existing_results = db.scalars(
+        select(AutomationScreeningResult).where(
+            AutomationScreeningResult.run_id == run.id,
+            AutomationScreeningResult.user_id == task.user_id,
+            AutomationScreeningResult.resume_id == resume_id,
+        )
+    ).all()
+
+    processed = len(existing_results)
+    last_job_id = max(
+        (result.job_id for result in existing_results),
+        default=0,
+    )
+
     prioritized = 0
     review = 0
     excluded = 0
-    expected_total = None
+
+    for existing in existing_results:
+        recommendation = (existing.result or {}).get("recommendation")
+        if recommendation == "prioritize":
+            prioritized += 1
+        elif recommendation == "review":
+            review += 1
+        elif recommendation == "exclude":
+            excluded += 1
+
+    run.summary = {
+        **(run.summary or {}),
+        "phase": "screening",
+        "expected_total": expected_total,
+        "processed_count": processed,
+        "prioritized_count": prioritized,
+        "review_count": review,
+        "excluded_count": excluded,
+        "last_job_id": last_job_id,
+    }
+    db.commit()
 
     while True:
         if lease_lost is not None and lease_lost.is_set():
             raise RuntimeError("Task lease was lost during screening.")
 
-        page = match_jobs_to_resume(
-            user_id=task.user_id,
-            resume_id=resume_id,
-            skip=skip,
-            limit=100,
-            db=db,
+        items = score_durable_screening_batch(
+            db,
+            context=context,
+            last_job_id=last_job_id,
+            batch_size=100,
         )
-
-        items = page.get("items", [])
-        expected_total = page.get("total", 0)
 
         if not items:
             break
 
         screening_results = []
+        batch_prioritized = 0
+        batch_review = 0
+        batch_excluded = 0
 
         for item in items:
             screening = screen_job(
@@ -150,14 +208,16 @@ def process_screening_task(
 
             recommendation = result.get("recommendation")
             if recommendation == "prioritize":
-                prioritized += 1
+                batch_prioritized += 1
             elif recommendation == "review":
-                review += 1
+                batch_review += 1
             elif recommendation == "exclude":
-                excluded += 1
+                batch_excluded += 1
 
         if lease_lost is not None and lease_lost.is_set():
-            raise RuntimeError("Task lease was lost before saving screening results.")
+            raise RuntimeError(
+                "Task lease was lost before saving screening results."
+            )
 
         save_screening_results(
             db,
@@ -168,31 +228,43 @@ def process_screening_task(
         )
 
         processed += len(screening_results)
-        skip += len(items)
+        prioritized += batch_prioritized
+        review += batch_review
+        excluded += batch_excluded
+        last_job_id = max(item["id"] for item in items)
 
         run.summary = {
             **(run.summary or {}),
+            "phase": "screening",
             "expected_total": expected_total,
             "processed_count": processed,
             "prioritized_count": prioritized,
             "review_count": review,
             "excluded_count": excluded,
+            "last_job_id": last_job_id,
         }
         db.commit()
 
-        if skip >= expected_total:
-            break
+    run.summary = {
+        **(run.summary or {}),
+        "phase": "completed",
+        "expected_total": expected_total,
+        "processed_count": processed,
+        "prioritized_count": prioritized,
+        "review_count": review,
+        "excluded_count": excluded,
+        "last_job_id": last_job_id,
+    }
+    db.commit()
 
     return {
         "resume_id": resume_id,
-        "total": expected_total or 0,
+        "total": expected_total,
         "processed_count": processed,
         "prioritized_count": prioritized,
         "review_count": review,
         "excluded_count": excluded,
     }
-
-
 
 
 def process_himalayas_ingestion_task(

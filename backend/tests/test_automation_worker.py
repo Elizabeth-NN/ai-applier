@@ -1,4 +1,5 @@
 import threading
+from pathlib import Path
 
 import pytest
 from sqlalchemy import create_engine, select
@@ -600,3 +601,69 @@ def test_durable_screening_includes_profile_evidence(db):
     assert "profile_matched_terms" in items[0]
     assert "profile_only_matched_terms" in items[0]
     assert "profile_term_evidence" in items[0]
+
+def test_durable_screening_prepares_resume_profile_and_corpus(
+    db,
+    monkeypatch,
+):
+    run, task, resume, jobs = create_screening_task(db, job_count=3)
+
+    profile = CandidateProfile(
+        user_id="user-1",
+        headline="Backend Developer",
+        professional_summary="Python backend developer",
+        skills=["Python", "FastAPI"],
+        experience=[],
+        projects=[],
+        education=[],
+        certifications=[],
+        target_roles=["Backend Developer"],
+        work_preferences={"remote_only": True},
+    )
+    db.add(profile)
+    db.commit()
+
+    monkeypatch.setattr(
+        "app.services.durable_job_screening.resumes_api._resolve_stored_path",
+        lambda resume: Path("/tmp/resume.pdf"),
+    )
+    monkeypatch.setattr(
+        "app.services.durable_job_screening.extract_resume_text",
+        lambda path, filename: "Python FastAPI developer",
+    )
+    monkeypatch.setattr(
+        "app.services.durable_job_screening.parse_resume_text",
+        lambda text: {},
+    )
+
+    context = prepare_durable_screening_context(
+        db,
+        user_id="user-1",
+        resume_id=resume.id,
+    )
+
+    assert context["resume_id"] == resume.id
+    assert context["max_job_id"] == max(job.id for job in jobs)
+    assert context["expected_total"] == 3
+    assert context["has_profile_evidence"] is True
+    assert context["resume_features"]
+    assert context["profile_features"]
+    assert context["combined_features"] == (
+        context["resume_features"] | context["profile_features"]
+    )
+    assert context["term_weights"]
+    assert "target_roles" not in context["profile_data"]
+    assert "work_preferences" not in context["profile_data"]
+
+def test_durable_screening_rejects_resume_owned_by_another_user(db):
+    run, task, resume, jobs = create_screening_task(db, job_count=1)
+
+    with pytest.raises(
+        ValueError,
+        match="Resume not found or does not belong to this user.",
+    ):
+        prepare_durable_screening_context(
+            db,
+            user_id="another-user",
+            resume_id=resume.id,
+        )
