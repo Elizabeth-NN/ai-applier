@@ -114,7 +114,52 @@ def prepare_durable_screening_context(
                 company,
             )
 
-    term_weights = build_term_weights(job_documents())
+    corpus_state = db.execute(
+        select(
+            JobMatchingCorpusState.revision,
+            JobMatchingCorpusState.term_weights,
+        ).where(JobMatchingCorpusState.id == 1)
+    ).one_or_none()
+
+    if corpus_state is None:
+        raise RuntimeError("Job matching corpus state is not initialized.")
+
+    corpus_revision, cached_weights = corpus_state
+    cached_entry = cached_weights or {}
+
+    if (
+        cached_entry.get("revision") == corpus_revision
+        and cached_entry.get("max_job_id") == max_job_id
+        and isinstance(cached_entry.get("weights"), dict)
+    ):
+        term_weights = cached_entry["weights"]
+    else:
+        term_weights = build_term_weights(job_documents())
+
+        state_to_update = db.scalar(
+            select(JobMatchingCorpusState)
+            .where(JobMatchingCorpusState.id == 1)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        current_max_job_id = db.scalar(select(func.max(Job.id))) or 0
+
+        if state_to_update is None:
+            raise RuntimeError("Job matching corpus state disappeared.")
+
+        # Do not cache weights if the corpus changed during preparation.
+        if (
+            state_to_update.revision == corpus_revision
+            and current_max_job_id == max_job_id
+        ):
+            state_to_update.term_weights = {
+                "revision": corpus_revision,
+                "max_job_id": max_job_id,
+                "weights": term_weights,
+            }
+            db.commit()
+        else:
+            db.rollback()
 
     return {
         "resume_id": resume_id,
