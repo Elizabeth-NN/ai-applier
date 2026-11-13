@@ -24,6 +24,7 @@ from app.api import resumes as resumes_api
 from app.db.dependencies import get_db
 from app.models.candidate_profile import CandidateProfile
 from app.models.job import Job
+from app.services.job_matching_corpus import mark_job_matching_corpus_changed
 from app.services.resume_text import extract_resume_text
 from app.services.structured_resume_parser import parse_resume_text
 from app.services.resume_job_matching import (
@@ -190,6 +191,7 @@ def create_job(
     job = Job(**payload.model_dump())
 
     db.add(job)
+    mark_job_matching_corpus_changed(db)
     db.commit()
     db.refresh(job)
     _invalidate_corpus_term_weights()

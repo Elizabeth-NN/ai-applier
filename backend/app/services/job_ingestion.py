@@ -271,6 +271,7 @@ def ingest_himalayas_batch(
         )
 
         inserted = updated = expired = 0
+        corpus_changed = False
 
         for fields in batch["jobs"]:
             statement = select(Job).where(
@@ -283,7 +284,9 @@ def ingest_himalayas_batch(
             if is_expired:
                 expired += 1
                 if existing is not None:
-                    _update_existing_job(existing, fields)
+                    corpus_changed = (
+                        _update_existing_job(existing, fields) or corpus_changed
+                    )
                     existing.listing_status = "closed"
                     existing.last_seen_at = now
                     updated += 1
@@ -292,8 +295,11 @@ def ingest_himalayas_batch(
             if existing is None:
                 db.add(Job(**fields, last_seen_at=now))
                 inserted += 1
+                corpus_changed = True
             else:
-                _update_existing_job(existing, fields)
+                corpus_changed = (
+                    _update_existing_job(existing, fields) or corpus_changed
+                )
                 existing.last_seen_at = now
                 updated += 1
 
@@ -333,6 +339,8 @@ def ingest_himalayas_batch(
             processed_batches[task_key] = result
             state.processed_batches = processed_batches
 
+        if corpus_changed:
+            mark_job_matching_corpus_changed(db)
         db.commit()
         return result
     except Exception:

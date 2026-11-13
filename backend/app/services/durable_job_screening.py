@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.api import resumes as resumes_api
 from app.models.candidate_profile import CandidateProfile
 from app.models.job import Job
+from app.models.job_matching_corpus_state import JobMatchingCorpusState
 from app.models.resume import Resume
 from app.services.resume_text import extract_resume_text
 from app.services.structured_resume_parser import parse_resume_text
