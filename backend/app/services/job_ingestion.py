@@ -25,8 +25,10 @@ def _is_expired(expires_at: datetime | None, now: datetime) -> bool:
     return expires_at <= now
 
 
-def _update_existing_job(existing: Job, fields: dict) -> None:
-    """Refresh source fields without erasing verified metadata."""
+def _update_existing_job(existing: Job, fields: dict) -> bool:
+    """Refresh source fields and report matching-text changes."""
+    matching_fields_changed = False
+
     for field, value in fields.items():
         if value is None:
             continue
@@ -47,7 +49,12 @@ def _update_existing_job(existing: Job, fields: dict) -> None:
             # Feed data must not overwrite a reviewed listing status.
             continue
         else:
+            if field in {"title", "description", "company"}:
+                if getattr(existing, field) != value:
+                    matching_fields_changed = True
             setattr(existing, field, value)
+
+    return matching_fields_changed
 
 
 def ingest_jobicy_jobs(db: Session) -> dict[str, int]:
