@@ -9,6 +9,7 @@ from app.models.application_batch import ApplicationBatch, ApplicationBatchItem
 from app.models.application_execution import ApplicationExecution
 from app.models.cover_letter_draft import CoverLetterDraft
 from app.models.himalayas_ingestion_state import HimalayasIngestionState
+from app.models.job_matching_corpus_state import JobMatchingCorpusState
 from app.models.job import Job
 from app.models.resume import Resume
 
@@ -19,6 +20,7 @@ __all__ = [
     "CandidateProfile",
     "CandidateAnswer",
     "HimalayasIngestionState",
+    "JobMatchingCorpusState",
     "Job",
     "Application",
     "ApplicationCampaign",
