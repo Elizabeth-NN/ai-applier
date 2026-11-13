@@ -11,6 +11,7 @@ from app.services.himalayas_adapter import (
     fetch_himalayas_jobs,
 )
 from app.services.jobicy_adapter import fetch_jobicy_jobs
+from app.services.job_matching_corpus import mark_job_matching_corpus_changed
 
 
 def _is_expired(expires_at: datetime | None, now: datetime) -> bool:
@@ -65,6 +66,7 @@ def ingest_jobicy_jobs(db: Session) -> dict[str, int]:
 
     inserted = 0
     updated = 0
+    corpus_changed = False
 
     try:
         for fields in incoming_jobs:
@@ -77,11 +79,16 @@ def ingest_jobicy_jobs(db: Session) -> dict[str, int]:
             if existing is None:
                 db.add(Job(**fields, last_seen_at=now))
                 inserted += 1
+                corpus_changed = True
             else:
-                _update_existing_job(existing, fields)
+                corpus_changed = (
+                    _update_existing_job(existing, fields) or corpus_changed
+                )
                 existing.last_seen_at = now
                 updated += 1
 
+        if corpus_changed:
+            mark_job_matching_corpus_changed(db)
         db.commit()
     except Exception:
         db.rollback()
@@ -103,6 +110,7 @@ def ingest_himalayas_jobs(db: Session) -> dict[str, int]:
     inserted = 0
     updated = 0
     expired = 0
+    corpus_changed = False
 
     try:
         # Close previously imported Himalayas listings whose expiry has passed,
@@ -129,7 +137,9 @@ def ingest_himalayas_jobs(db: Session) -> dict[str, int]:
                 # Never create a new database record for an expired listing.
                 # If already imported, refresh its source data and close it.
                 if existing is not None:
-                    _update_existing_job(existing, fields)
+                    corpus_changed = (
+                        _update_existing_job(existing, fields) or corpus_changed
+                    )
                     existing.listing_status = "closed"
                     existing.last_seen_at = now
                     updated += 1
@@ -139,11 +149,16 @@ def ingest_himalayas_jobs(db: Session) -> dict[str, int]:
             if existing is None:
                 db.add(Job(**fields, last_seen_at=now))
                 inserted += 1
+                corpus_changed = True
             else:
-                _update_existing_job(existing, fields)
+                corpus_changed = (
+                    _update_existing_job(existing, fields) or corpus_changed
+                )
                 existing.last_seen_at = now
                 updated += 1
 
+        if corpus_changed:
+            mark_job_matching_corpus_changed(db)
         db.commit()
     except Exception:
         db.rollback()
