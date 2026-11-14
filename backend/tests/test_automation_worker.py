@@ -764,11 +764,52 @@ def test_durable_screening_prepares_resume_profile_and_corpus(
         lambda text: {},
     )
 
+    from app.services import durable_job_screening
+
+    original_build = durable_job_screening.build_term_weights
+    build_calls = 0
+
+    def tracked_build(documents):
+        nonlocal build_calls
+        build_calls += 1
+        return original_build(documents)
+
+    monkeypatch.setattr(
+        durable_job_screening,
+        "build_term_weights",
+        tracked_build,
+    )
+
     context = prepare_durable_screening_context(
         db,
         user_id="user-1",
         resume_id=resume.id,
     )
+
+    assert build_calls == 1
+
+    # Same revision and job boundary should reuse the cached weights.
+    cached_context = prepare_durable_screening_context(
+        db,
+        user_id="user-1",
+        resume_id=resume.id,
+    )
+    assert build_calls == 1
+    assert cached_context["term_weights"] == context["term_weights"]
+
+    # Changing the corpus revision must force a rebuild.
+    corpus_state = db.get(JobMatchingCorpusState, 1)
+    corpus_state.revision += 1
+    corpus_state.term_weights = None
+    db.commit()
+
+    refreshed_context = prepare_durable_screening_context(
+        db,
+        user_id="user-1",
+        resume_id=resume.id,
+    )
+    assert build_calls == 2
+    assert refreshed_context["term_weights"] == context["term_weights"]
 
     assert context["resume_id"] == resume.id
     assert context["max_job_id"] == max(job.id for job in jobs)
