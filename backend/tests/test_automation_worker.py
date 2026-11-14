@@ -811,6 +811,26 @@ def test_durable_screening_prepares_resume_profile_and_corpus(
     assert build_calls == 2
     assert refreshed_context["term_weights"] == context["term_weights"]
 
+    # An older run boundary must not overwrite the full-corpus cache.
+    older_max_job_id = sorted(job.id for job in jobs)[-2]
+    older_context = prepare_durable_screening_context(
+        db,
+        user_id="user-1",
+        resume_id=resume.id,
+        max_job_id=older_max_job_id,
+    )
+    assert older_context["expected_total"] == 2
+    assert build_calls == 3
+
+    # The full-corpus cache should still be available.
+    final_context = prepare_durable_screening_context(
+        db,
+        user_id="user-1",
+        resume_id=resume.id,
+    )
+    assert final_context["term_weights"] == context["term_weights"]
+    assert build_calls == 3
+
     assert context["resume_id"] == resume.id
     assert context["max_job_id"] == max(job.id for job in jobs)
     assert context["expected_total"] == 3
