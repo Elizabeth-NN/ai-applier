@@ -7,6 +7,8 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.db.session import Base
+from app.models.job_matching_corpus_state import JobMatchingCorpusState
+from app.models.job_matching_corpus_state import JobMatchingCorpusState
 from app.models import (
     AutomationScreeningResult,
     AutomationTask,
@@ -45,6 +47,8 @@ def db():
         expire_on_commit=False,
     )
     session = factory()
+    session.add(JobMatchingCorpusState(id=1, revision=1))
+    session.commit()
 
     try:
         yield session
