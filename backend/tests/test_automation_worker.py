@@ -447,6 +447,91 @@ def configure_worker_sessions(db, monkeypatch):
     )
 
 
+def test_heartbeat_retries_transient_database_failure(monkeypatch):
+    stop_event = threading.Event()
+    lease_lost = threading.Event()
+    calls = 0
+
+    class FakeSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    def fake_renew(db, **kwargs):
+        nonlocal calls
+        calls += 1
+
+        if calls == 1:
+            raise automation_worker.OperationalError(
+                "renew lease",
+                {},
+                RuntimeError("temporary database failure"),
+            )
+
+        stop_event.set()
+
+    monkeypatch.setattr(
+        automation_worker,
+        "SessionLocal",
+        lambda: FakeSession(),
+    )
+    monkeypatch.setattr(
+        automation_worker,
+        "renew_automation_task_lease",
+        fake_renew,
+    )
+    monkeypatch.setattr(automation_worker, "HEARTBEAT_SECONDS", 0)
+    monkeypatch.setattr(automation_worker, "HEARTBEAT_RETRY_SECONDS", 0)
+
+    automation_worker._heartbeat(
+        task_id=123,
+        worker_id="worker-1",
+        stop_event=stop_event,
+        lease_lost=lease_lost,
+    )
+
+    assert calls == 2
+    assert lease_lost.is_set() is False
+
+
+def test_heartbeat_stops_on_permanent_lease_failure(monkeypatch):
+    stop_event = threading.Event()
+    lease_lost = threading.Event()
+
+    class FakeSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    def fake_renew(db, **kwargs):
+        raise ValueError("Task is no longer owned by this worker.")
+
+    monkeypatch.setattr(
+        automation_worker,
+        "SessionLocal",
+        lambda: FakeSession(),
+    )
+    monkeypatch.setattr(
+        automation_worker,
+        "renew_automation_task_lease",
+        fake_renew,
+    )
+    monkeypatch.setattr(automation_worker, "HEARTBEAT_SECONDS", 0)
+
+    automation_worker._heartbeat(
+        task_id=123,
+        worker_id="worker-1",
+        stop_event=stop_event,
+        lease_lost=lease_lost,
+    )
+
+    assert lease_lost.is_set() is True
+
+
 def test_process_one_task_completes_task_and_reconciles_run(db, monkeypatch):
     run, task, _, _ = prepare_queued_task(db)
     configure_worker_sessions(db, monkeypatch)
