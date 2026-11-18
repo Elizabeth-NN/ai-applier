@@ -7,7 +7,11 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import case, func, select
-from sqlalchemy.exc import InterfaceError, OperationalError, TimeoutError as SQLAlchemyTimeoutError
+from sqlalchemy.exc import (
+    InterfaceError,
+    OperationalError,
+    TimeoutError as SQLAlchemyTimeoutError,
+)
 from sqlalchemy.orm import Session
 
 from app.db.session import SessionLocal
