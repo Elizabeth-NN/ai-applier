@@ -6,7 +6,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
 from app.db.session import SessionLocal
@@ -133,32 +133,42 @@ def process_screening_task(
 
     expected_total = context["expected_total"]
 
-    existing_results = db.scalars(
-        select(AutomationScreeningResult).where(
+    recommendation = AutomationScreeningResult.result[
+        "recommendation"
+    ].as_string()
+
+    progress = db.execute(
+        select(
+            func.count(AutomationScreeningResult.id),
+            func.max(AutomationScreeningResult.job_id),
+            func.coalesce(
+                func.sum(
+                    case((recommendation == "prioritize", 1), else_=0)
+                ),
+                0,
+            ),
+            func.coalesce(
+                func.sum(
+                    case((recommendation == "review", 1), else_=0)
+                ),
+                0,
+            ),
+            func.coalesce(
+                func.sum(
+                    case((recommendation == "exclude", 1), else_=0)
+                ),
+                0,
+            ),
+        ).where(
             AutomationScreeningResult.run_id == run.id,
             AutomationScreeningResult.user_id == task.user_id,
             AutomationScreeningResult.resume_id == resume_id,
         )
-    ).all()
+    ).one()
 
-    processed = len(existing_results)
-    last_job_id = max(
-        (result.job_id for result in existing_results),
-        default=0,
-    )
-
-    prioritized = 0
-    review = 0
-    excluded = 0
-
-    for existing in existing_results:
-        recommendation = (existing.result or {}).get("recommendation")
-        if recommendation == "prioritize":
-            prioritized += 1
-        elif recommendation == "review":
-            review += 1
-        elif recommendation == "exclude":
-            excluded += 1
+    processed, last_job_id, prioritized, review, excluded = progress
+    processed = processed or 0
+    last_job_id = last_job_id or 0
 
     run.summary = {
         **(run.summary or {}),
