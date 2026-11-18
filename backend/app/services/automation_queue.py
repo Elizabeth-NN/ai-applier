@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+import logging
 from typing import Any
 
 from sqlalchemy import select
@@ -7,6 +8,8 @@ from sqlalchemy.orm import Session
 
 from app.models.automation_run import AutomationRun
 from app.models.automation_task import AutomationTask
+
+logger = logging.getLogger(__name__)
 
 
 def create_automation_run(
@@ -429,11 +432,30 @@ def recover_expired_tasks(
         tasks = list(db.scalars(statement).all())
 
         for task in tasks:
+            previous_worker = task.locked_by
+            will_retry = task.attempts < task.max_attempts
+
+            logger.warning(
+                "Recovering expired automation task: "
+                "task_id=%s run_id=%s task_type=%s worker_id=%s "
+                "attempts=%s max_attempts=%s action=%s "
+                "started_at=%s locked_until=%s",
+                task.id,
+                task.run_id,
+                task.task_type,
+                previous_worker,
+                task.attempts,
+                task.max_attempts,
+                "requeue" if will_retry else "fail",
+                task.started_at,
+                task.locked_until,
+            )
+
             task.last_error = "Worker lease expired before task completion."
             task.locked_by = None
             task.locked_until = None
 
-            if task.attempts < task.max_attempts:
+            if will_retry:
                 task.status = "queued"
                 task.available_at = recovered_at + timedelta(
                     seconds=retry_delay_seconds
