@@ -1,5 +1,5 @@
-from datetime import datetime, timedelta, timezone
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import select
@@ -431,24 +431,22 @@ def recover_expired_tasks(
     try:
         tasks = list(db.scalars(statement).all())
 
-        for task in tasks:
-            previous_worker = task.locked_by
-            will_retry = task.attempts < task.max_attempts
+        recovery_details = []
 
-            logger.warning(
-                "Recovering expired automation task: "
-                "task_id=%s run_id=%s task_type=%s worker_id=%s "
-                "attempts=%s max_attempts=%s action=%s "
-                "started_at=%s locked_until=%s",
-                task.id,
-                task.run_id,
-                task.task_type,
-                previous_worker,
-                task.attempts,
-                task.max_attempts,
-                "requeue" if will_retry else "fail",
-                task.started_at,
-                task.locked_until,
+        for task in tasks:
+            will_retry = task.attempts < task.max_attempts
+            recovery_details.append(
+                (
+                    task.id,
+                    task.run_id,
+                    task.task_type,
+                    task.locked_by,
+                    task.attempts,
+                    task.max_attempts,
+                    "requeue" if will_retry else "fail",
+                    task.started_at,
+                    task.locked_until,
+                )
             )
 
             task.last_error = "Worker lease expired before task completion."
@@ -466,6 +464,15 @@ def recover_expired_tasks(
 
         if tasks:
             db.commit()
+
+            for details in recovery_details:
+                logger.warning(
+                    "Recovered expired automation task: "
+                    "task_id=%s run_id=%s task_type=%s worker_id=%s "
+                    "attempts=%s max_attempts=%s action=%s "
+                    "started_at=%s locked_until=%s",
+                    *details,
+                )
         else:
             db.rollback()
 
