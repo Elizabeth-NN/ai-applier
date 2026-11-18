@@ -9,6 +9,7 @@ __pycache__/
 *.egg-info/
 .venv/
 venv/
+.vscode
 
 # Testing and tooling
 .pytest_cache/

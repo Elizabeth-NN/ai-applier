@@ -7,6 +7,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import case, func, select
+from sqlalchemy.exc import InterfaceError, OperationalError, TimeoutError as SQLAlchemyTimeoutError
 from sqlalchemy.orm import Session
 
 from app.db.session import SessionLocal
@@ -25,6 +26,7 @@ POLL_SECONDS = 3
 RECOVERY_INTERVAL_SECONDS = 30
 LEASE_SECONDS = 300
 HEARTBEAT_SECONDS = 30
+HEARTBEAT_RETRY_SECONDS = 5
 
 
 def _utc_now() -> datetime:
@@ -370,20 +372,57 @@ def _heartbeat(
     stop_event: threading.Event,
     lease_lost: threading.Event,
 ) -> None:
-    """Renew the task lease from an independent database session."""
+    """Renew the task lease, retrying transient database failures."""
+    last_success = time.monotonic()
+
     while not stop_event.wait(HEARTBEAT_SECONDS):
-        try:
-            with SessionLocal() as db:
-                renew_automation_task_lease(
-                    db,
-                    task_id=task_id,
-                    worker_id=worker_id,
-                    lease_seconds=LEASE_SECONDS,
+        while not stop_event.is_set():
+            try:
+                with SessionLocal() as db:
+                    renew_automation_task_lease(
+                        db,
+                        task_id=task_id,
+                        worker_id=worker_id,
+                        lease_seconds=LEASE_SECONDS,
+                    )
+
+                last_success = time.monotonic()
+                break
+
+            except (OperationalError, InterfaceError, SQLAlchemyTimeoutError):
+                remaining = (
+                    LEASE_SECONDS
+                    - HEARTBEAT_SECONDS
+                    - (time.monotonic() - last_success)
                 )
-        except Exception:
-            logger.exception("Lease renewal failed for task %s", task_id)
-            lease_lost.set()
-            return
+
+                if remaining <= 0:
+                    logger.exception(
+                        "Lease renewal retries exhausted for task %s; "
+                        "the lease safety window has elapsed.",
+                        task_id,
+                    )
+                    lease_lost.set()
+                    return
+
+                retry_delay = min(HEARTBEAT_RETRY_SECONDS, remaining)
+                logger.exception(
+                    "Transient lease renewal failure for task %s; "
+                    "retrying in %.1f seconds.",
+                    task_id,
+                    retry_delay,
+                )
+
+                if stop_event.wait(retry_delay):
+                    return
+
+            except Exception:
+                logger.exception(
+                    "Lease renewal failed permanently for task %s.",
+                    task_id,
+                )
+                lease_lost.set()
+                return
 
 
 def _reconcile_run(db: Session, run_id: int) -> None:
