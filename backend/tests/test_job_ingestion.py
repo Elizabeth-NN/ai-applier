@@ -655,7 +655,8 @@ def test_himalayas_batch_reconciliation_rolls_back_when_fetch_fails(
     state = db_session.get(HimalayasIngestionState, 1)
 
     assert stored_job.listing_status == "active"
-    assert state.expiry_reconciled_at is None
+    # The state row itself was created in the failed transaction and rolled back.
+    assert state is None
 
 
 def test_new_manual_himalayas_scan_resets_expiry_reconciliation(
