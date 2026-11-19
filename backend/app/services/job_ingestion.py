@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 
-from sqlalchemy import select, text
+from sqlalchemy import select, text, update
 from sqlalchemy.orm import Session
 
 from app.models.job import Job
@@ -259,11 +259,30 @@ def ingest_himalayas_batch(
             state.inserted = 0
             state.updated = 0
             state.expired = 0
+            state.expiry_reconciled_at = None
             state.started_at = now
             state.completed_at = None
             state.processed_batches = {}
         elif state.started_at is None:
             state.started_at = now
+
+        # Reconcile expired listings exactly once per scan. This is deliberately
+        # in the batch transaction, so the marker cannot commit without the
+        # corresponding status updates (or vice versa).
+        reconciled_expired = 0
+        if state.expiry_reconciled_at is None:
+            reconciliation = db.execute(
+                update(Job)
+                .where(
+                    Job.source_name == "himalayas",
+                    Job.expires_at.is_not(None),
+                    Job.expires_at <= now,
+                    Job.listing_status != "closed",
+                )
+                .values(listing_status="closed")
+            )
+            reconciled_expired = max(reconciliation.rowcount or 0, 0)
+            state.expiry_reconciled_at = now
 
         batch = fetch_himalayas_batch(
             cursor=state.cursor,
@@ -325,6 +344,7 @@ def ingest_himalayas_batch(
             "inserted_this_batch": inserted,
             "updated_this_batch": updated,
             "expired_this_batch": expired,
+            "reconciled_expired_this_batch": reconciled_expired,
             "pages_fetched": state.pages_fetched,
             "fetched": state.fetched,
             "inserted": state.inserted,

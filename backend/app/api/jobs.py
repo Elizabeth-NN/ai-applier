@@ -1122,6 +1122,7 @@ def start_himalayas_ingestion(
         state.inserted = 0
         state.updated = 0
         state.expired = 0
+        state.expiry_reconciled_at = None
         state.started_at = now
         state.updated_at = now
         state.completed_at = None

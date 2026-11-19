@@ -34,6 +34,11 @@ class HimalayasIngestionState(Base):
     updated: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text('0'))
     expired: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text('0'))
 
+    # Set once per scan after the first batch transaction reconciles expired listings.
+    expiry_reconciled_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
     started_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )

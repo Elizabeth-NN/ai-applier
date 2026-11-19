@@ -14,6 +14,7 @@ class HimalayasBatchIngestionResult(BaseModel):
     inserted_this_batch: int = Field(ge=0)
     updated_this_batch: int = Field(ge=0)
     expired_this_batch: int = Field(ge=0)
+    reconciled_expired_this_batch: int = Field(ge=0)
 
     # Cumulative counts for the current ingestion run.
     pages_fetched: int = Field(ge=0)
