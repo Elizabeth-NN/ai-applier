@@ -539,6 +539,162 @@ def test_partial_himalayas_batch_does_not_close_absent_jobs(
     assert result["status"] == "running"
     assert existing.listing_status == "active"
 
+
+def test_himalayas_batch_reconciles_expired_absent_jobs_once_per_scan(
+    db_session, monkeypatch
+):
+    from datetime import datetime, timedelta, timezone
+
+    from app.models.himalayas_ingestion_state import HimalayasIngestionState
+
+    expired = incoming_himalayas_job(
+        expires_at=datetime.now(timezone.utc) - timedelta(days=2)
+    )
+    expired["source_job_id"] = "expired-absent-job"
+    expired["listing_status"] = "active"
+
+    already_closed = incoming_himalayas_job(
+        expires_at=datetime.now(timezone.utc) - timedelta(days=3)
+    )
+    already_closed["source_job_id"] = "already-closed-job"
+    already_closed["listing_status"] = "closed"
+
+    still_active = incoming_himalayas_job(
+        expires_at=datetime.now(timezone.utc) + timedelta(days=2)
+    )
+    still_active["source_job_id"] = "still-active-job"
+    still_active["listing_status"] = "active"
+
+    db_session.add_all([
+        Job(**expired),
+        Job(**already_closed),
+        Job(**still_active),
+    ])
+    db_session.commit()
+
+    batches = iter([
+        {
+            "jobs": [],
+            "next_cursor": "next",
+            "pages_fetched": 1,
+            "complete": False,
+        },
+        {
+            "jobs": [],
+            "next_cursor": None,
+            "pages_fetched": 1,
+            "complete": True,
+        },
+    ])
+    monkeypatch.setattr(
+        job_ingestion,
+        "fetch_himalayas_batch",
+        lambda **_kwargs: next(batches),
+        raising=False,
+    )
+
+    first = job_ingestion.ingest_himalayas_batch(db_session)
+    db_session.expire_all()
+
+    expired_after_first = db_session.scalar(
+        select(Job).where(Job.source_job_id == "expired-absent-job")
+    )
+    closed_after_first = db_session.scalar(
+        select(Job).where(Job.source_job_id == "already-closed-job")
+    )
+    active_after_first = db_session.scalar(
+        select(Job).where(Job.source_job_id == "still-active-job")
+    )
+    state = db_session.get(HimalayasIngestionState, 1)
+
+    assert first["reconciled_expired_this_batch"] == 1
+    assert expired_after_first.listing_status == "closed"
+    assert closed_after_first.listing_status == "closed"
+    assert active_after_first.listing_status == "active"
+    assert state.expiry_reconciled_at is not None
+
+    second = job_ingestion.ingest_himalayas_batch(db_session)
+    assert second["reconciled_expired_this_batch"] == 0
+
+
+def test_himalayas_batch_reconciliation_rolls_back_when_fetch_fails(
+    db_session, monkeypatch
+):
+    from datetime import datetime, timedelta, timezone
+
+    from app.models.himalayas_ingestion_state import HimalayasIngestionState
+    from app.services.himalayas_adapter import HimalayasAPIError
+
+    expired = incoming_himalayas_job(
+        expires_at=datetime.now(timezone.utc) - timedelta(days=1)
+    )
+    expired["source_job_id"] = "expired-before-failed-first-batch"
+    expired["listing_status"] = "active"
+    db_session.add(Job(**expired))
+    db_session.commit()
+
+    def fail_fetch(**_kwargs):
+        raise HimalayasAPIError("Simulated upstream failure")
+
+    monkeypatch.setattr(
+        job_ingestion,
+        "fetch_himalayas_batch",
+        fail_fetch,
+        raising=False,
+    )
+
+    with pytest.raises(HimalayasAPIError):
+        job_ingestion.ingest_himalayas_batch(db_session)
+
+    db_session.expire_all()
+    stored_job = db_session.scalar(
+        select(Job).where(
+            Job.source_job_id == "expired-before-failed-first-batch"
+        )
+    )
+    state = db_session.get(HimalayasIngestionState, 1)
+
+    assert stored_job.listing_status == "active"
+    assert state.expiry_reconciled_at is None
+
+
+def test_new_manual_himalayas_scan_resets_expiry_reconciliation(
+    db_session, monkeypatch
+):
+    from datetime import datetime, timezone
+
+    from app.models.himalayas_ingestion_state import HimalayasIngestionState
+
+    state = HimalayasIngestionState(
+        id=1,
+        status="completed",
+        expiry_reconciled_at=datetime(2026, 11, 18, tzinfo=timezone.utc),
+        processed_batches={},
+    )
+    db_session.add(state)
+    db_session.commit()
+
+    monkeypatch.setattr(
+        job_ingestion,
+        "fetch_himalayas_batch",
+        lambda **_kwargs: {
+            "jobs": [],
+            "next_cursor": None,
+            "pages_fetched": 1,
+            "complete": True,
+        },
+        raising=False,
+    )
+
+    result = job_ingestion.ingest_himalayas_batch(db_session)
+    db_session.refresh(state)
+
+    assert result["reconciled_expired_this_batch"] == 0
+    assert state.expiry_reconciled_at is not None
+    assert state.expiry_reconciled_at != datetime(
+        2026, 11, 18, tzinfo=timezone.utc
+    )
+
 def test_himalayas_batch_replay_is_safe_after_later_tasks(
     db_session, monkeypatch
 ):
