@@ -2663,7 +2663,7 @@ const [profileRefreshKey, setProfileRefreshKey] = useState(0);
     }
   }
 
-  async function importHimalayas() {
+    async function importHimalayas() {
     if (isImportingHimalayas) return;
 
     setIsImportingHimalayas(true);
@@ -2676,57 +2676,24 @@ const [profileRefreshKey, setProfileRefreshKey] = useState(0);
         throw new Error("Your session has expired. Please sign in again.");
       }
 
-      let completed = false;
-      let batches = 0;
-      let pagesFetched = 0;
-      let fetched = 0;
-      let inserted = 0;
-      let updated = 0;
-      let expired = 0;
+      const result = await apiRequest<{
+        run_id: number;
+        task_id: number;
+        pipeline_type: string;
+        status: string;
+        task_status: string;
+        max_pages: number;
+      }>("/api/jobs/ingest/himalayas/start", token, {
+        method: "POST",
+      });
 
-      while (!completed) {
-        const result = await apiRequest<{
-          status: "running" | "completed";
-          pages_this_batch: number;
-          fetched_this_batch: number;
-          inserted_this_batch: number;
-          updated_this_batch: number;
-          expired_this_batch: number;
-          pages_fetched: number;
-          fetched: number;
-          inserted: number;
-          updated: number;
-          expired: number;
-          completed: boolean;
-        }>("/api/jobs/ingest/himalayas/batch?max_pages=5", token, {
-          method: "POST",
-        });
-
-        batches += 1;
-        pagesFetched += result.pages_this_batch;
-        fetched += result.fetched_this_batch;
-        inserted += result.inserted_this_batch;
-        updated += result.updated_this_batch;
-        expired += result.expired_this_batch;
-        completed = result.completed;
-
-        showNotice(
-          `Himalayas import in progress: ${fetched} fetched across ` +
-            `${batches} batches (${pagesFetched} pages).`,
-        );
-      }
-
-      setJobPage(1);
-      setJobsRefreshKey((current) => current + 1);
       showNotice(
-        `Himalayas import complete: ${fetched} fetched, ` +
-          `${inserted} inserted, ${updated} updated, ${expired} expired.`,
-        "Find Jobs",
-        "View jobs",
+        `Himalayas import run #${result.run_id} has been queued. ` +
+          "The background worker will process the listings.",
       );
     } catch (err) {
       setError(
-        err instanceof Error ? err.message : "Could not import Himalayas jobs.",
+        err instanceof Error ? err.message : "Could not start Himalayas import.",
       );
     } finally {
       setIsImportingHimalayas(false);
