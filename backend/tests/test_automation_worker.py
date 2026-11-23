@@ -1021,3 +1021,95 @@ def test_run_worker_stops_without_claiming_tasks_when_shutdown_requested(
     )
 
     assert claimed_tasks == []
+
+
+def test_run_worker_once_recovers_and_respects_attempt_limit(monkeypatch):
+    recovery_calls = []
+    processed_workers = []
+
+    class FakeSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            return False
+
+    monkeypatch.setattr(
+        automation_worker,
+        "SessionLocal",
+        FakeSession,
+    )
+    monkeypatch.setattr(
+        automation_worker,
+        "recover_expired_tasks",
+        lambda db: recovery_calls.append("recovered") or 2,
+    )
+    monkeypatch.setattr(
+        automation_worker,
+        "_reconcile_all_runs",
+        lambda db: recovery_calls.append("reconciled"),
+    )
+
+    def fake_process(worker_id):
+        processed_workers.append(worker_id)
+        return True
+
+    monkeypatch.setattr(
+        automation_worker,
+        "process_one_task",
+        fake_process,
+    )
+
+    processed = automation_worker.run_worker_once(
+        worker_id="scheduled-test-worker",
+        max_tasks=3,
+    )
+
+    assert processed == 3
+    assert recovery_calls == ["recovered", "reconciled"]
+    assert processed_workers == ["scheduled-test-worker"] * 3
+
+
+def test_run_worker_once_stops_when_queue_is_empty(monkeypatch):
+    class FakeSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            return False
+
+    monkeypatch.setattr(
+        automation_worker,
+        "SessionLocal",
+        FakeSession,
+    )
+    monkeypatch.setattr(
+        automation_worker,
+        "recover_expired_tasks",
+        lambda db: 0,
+    )
+    monkeypatch.setattr(
+        automation_worker,
+        "_reconcile_all_runs",
+        lambda db: None,
+    )
+
+    calls = []
+
+    def fake_process(worker_id):
+        calls.append(worker_id)
+        return False
+
+    monkeypatch.setattr(
+        automation_worker,
+        "process_one_task",
+        fake_process,
+    )
+
+    assert automation_worker.run_worker_once(max_tasks=10) == 0
+    assert len(calls) == 1
+
+
+def test_run_worker_once_rejects_invalid_attempt_limit():
+    with pytest.raises(ValueError, match="max_tasks must be at least 1"):
+        automation_worker.run_worker_once(max_tasks=0)
