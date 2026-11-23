@@ -1731,7 +1731,7 @@ def test_himalayas_ingestion_resume_preserves_saved_progress(job_context):
         assert state.updated == 10486
         assert state.expired == 0
         assert state.processed_batches == {"4935": {"pages_fetched": 25}}
-        assert state.expiry_reconciled_at == expiry_marker
+        assert state.expiry_reconciled_at.replace(tzinfo=timezone.utc) == expiry_marker
         assert state.completed_at is None
     finally:
         db.close()
