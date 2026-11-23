@@ -148,3 +148,56 @@ To load it in Chrome:
 
 The extension assists with application preparation. It does not automatically submit applications.
 
+## Running tests and checks
+
+### Backend tests
+
+From the repository root:
+
+    source backend/.venv/bin/activate
+    cd backend
+    python -m pytest -q
+
+### Frontend checks
+
+From the frontend directory:
+
+    npm run lint
+    npx tsc --noEmit
+    npm run build
+
+### Extension tests
+
+From the repository root:
+
+    node --test extension/tests/*.test.js
+
+## Project documentation
+
+For more detailed information, see:
+
+- [Product Requirements](docs/PRD.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [API documentation](docs/API.md)
+- [Development guide](docs/DEVELOPMENT.md)
+- [Project roadmap](ROADMAP.md)
+- [Architecture and implementation decisions](docs/DECISIONS.md)
+
+## Project principles
+
+AI Applier is developed around the following principles:
+
+- **Human approval:** Candidates remain in control of application decisions and submissions.
+- **Truthfulness:** Matching scores and application statuses must accurately represent available evidence.
+- **Privacy:** Candidate information must remain isolated between users.
+- **Persistence:** Important application and candidate data must be reliably stored.
+- **Transparency:** Users should be able to understand what the system has done.
+- **Reliability:** Features should be tested and behave consistently.
+
+## Development status
+
+AI Applier is an actively developed project. Features and integrations may change as development progresses. Refer to the project roadmap and documentation for implementation details.
+
+## License
+
+No open-source license has been specified yet. All rights remain with the project owner unless a license is added.
