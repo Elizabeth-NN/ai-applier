@@ -1,5 +1,6 @@
 """Background worker for durable automation tasks."""
 
+import argparse
 import logging
 import signal
 import threading
@@ -657,23 +658,89 @@ def run_worker(
     logger.info("Automation worker stopped: %s", worker_id)
 
 
+def run_worker_once(
+    worker_id: str | None = None,
+    max_tasks: int = 10,
+) -> int:
+    """Recover expired leases and process up to max_tasks available attempts."""
+    if max_tasks < 1:
+        raise ValueError("max_tasks must be at least 1.")
+
+    worker_id = worker_id or f"automation-worker-{uuid.uuid4()}"
+
+    logger.info(
+        "Scheduled worker started: %s (max task attempts: %s)",
+        worker_id,
+        max_tasks,
+    )
+
+    try:
+        with SessionLocal() as db:
+            recovered = recover_expired_tasks(db)
+            _reconcile_all_runs(db)
+
+        if recovered:
+            logger.warning("Recovered %s expired task(s).", recovered)
+
+    except Exception:
+        logger.exception("Scheduled worker recovery cycle failed.")
+
+    processed_count = 0
+
+    while processed_count < max_tasks:
+        processed = process_one_task(worker_id)
+
+        if not processed:
+            break
+
+        # Counts claimed attempts, including tasks that fail and are requeued.
+        processed_count += 1
+
+    logger.info(
+        "Scheduled worker stopped: %s (task attempts: %s)",
+        worker_id,
+        processed_count,
+    )
+    return processed_count
+
+
 if __name__ == "__main__":
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
-    shutdown_event = threading.Event()
+    parser = argparse.ArgumentParser(description="AI Applier automation worker")
+    parser.add_argument(
+        "--once",
+        action="store_true",
+        help="Process a bounded number of available tasks, then exit.",
+    )
+    parser.add_argument(
+        "--max-tasks",
+        type=int,
+        default=10,
+        help="Maximum task attempts in --once mode (default: 10).",
+    )
+    args = parser.parse_args()
 
-    def request_shutdown(signum, frame):
-        logger.info("Received signal %s; requesting worker shutdown.", signum)
-        shutdown_event.set()
+    if args.once:
+        run_worker_once(max_tasks=args.max_tasks)
+    else:
+        shutdown_event = threading.Event()
 
-    signal.signal(signal.SIGTERM, request_shutdown)
-    signal.signal(signal.SIGINT, request_shutdown)
+        def request_shutdown(signum, frame):
+            logger.info(
+                "Received signal %s; requesting worker shutdown.",
+                signum,
+            )
+            shutdown_event.set()
 
-    try:
-        run_worker(stop_event=shutdown_event)
-    except KeyboardInterrupt:
-        shutdown_event.set()
-        logger.info("Automation worker interrupted.")
+        signal.signal(signal.SIGTERM, request_shutdown)
+        signal.signal(signal.SIGINT, request_shutdown)
+
+        try:
+            run_worker(stop_event=shutdown_event)
+        except KeyboardInterrupt:
+            shutdown_event.set()
+            logger.info("Automation worker interrupted.")
