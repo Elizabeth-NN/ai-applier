@@ -1,6 +1,7 @@
 """Background worker for durable automation tasks."""
 
 import logging
+import signal
 import threading
 import time
 import uuid
@@ -616,17 +617,19 @@ def process_one_task(worker_id: str) -> bool:
 def run_worker(
     worker_id: str | None = None,
     poll_seconds: int = POLL_SECONDS,
+    stop_event: threading.Event | None = None,
 ) -> None:
-    """Continuously recover expired leases and process queued tasks."""
+    """Recover expired leases and process tasks until shutdown is requested."""
     if poll_seconds < 1:
         raise ValueError("poll_seconds must be at least 1.")
 
     worker_id = worker_id or f"automation-worker-{uuid.uuid4()}"
+    stop_event = stop_event or threading.Event()
     last_recovery = 0.0
 
     logger.info("Automation worker started: %s", worker_id)
 
-    while True:
+    while not stop_event.is_set():
         now = time.monotonic()
 
         if now - last_recovery >= RECOVERY_INTERVAL_SECONDS:
@@ -643,10 +646,15 @@ def run_worker(
 
             last_recovery = now
 
+        if stop_event.is_set():
+            break
+
         processed = process_one_task(worker_id)
 
         if not processed:
-            time.sleep(poll_seconds)
+            stop_event.wait(poll_seconds)
+
+    logger.info("Automation worker stopped: %s", worker_id)
 
 
 if __name__ == "__main__":
@@ -655,7 +663,17 @@ if __name__ == "__main__":
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
+    shutdown_event = threading.Event()
+
+    def request_shutdown(signum, frame):
+        logger.info("Received signal %s; requesting worker shutdown.", signum)
+        shutdown_event.set()
+
+    signal.signal(signal.SIGTERM, request_shutdown)
+    signal.signal(signal.SIGINT, request_shutdown)
+
     try:
-        run_worker()
+        run_worker(stop_event=shutdown_event)
     except KeyboardInterrupt:
-        logger.info("Automation worker stopped.")
+        shutdown_event.set()
+        logger.info("Automation worker interrupted.")

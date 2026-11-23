@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     db_user: str = "ai_applier_user"
     db_password: str
     clerk_secret_key: str
+    frontend_origins: str = "http://localhost:3000"
     gemini_api_key: str | None = None
     gemini_model: str = "gemma-4-26b-a4b-it"
     jobicy_status_sync_enabled: bool = False
@@ -26,6 +27,14 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
     )
+
+    @property
+    def allowed_frontend_origins(self) -> list[str]:
+        return [
+            origin.strip().rstrip("/")
+            for origin in self.frontend_origins.split(",")
+            if origin.strip()
+        ]
 
     @property
     def database_url(self) -> URL:

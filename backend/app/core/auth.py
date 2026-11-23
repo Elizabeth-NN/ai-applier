@@ -15,7 +15,7 @@ def _authenticated_payload(request: Request) -> dict:
         request,
         AuthenticateRequestOptions(
             secret_key=settings.clerk_secret_key,
-            authorized_parties=["http://localhost:3000"],
+            authorized_parties=settings.allowed_frontend_origins,
             accepts_token=["session_token"],
         ),
     )
