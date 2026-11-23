@@ -351,6 +351,7 @@ export default function ApplicationBatches({ onOpenExecutions }: Props) {
     );
     setExecutions(loadedExecutions);
     setBatches(loadedBatches);
+    setCampaigns(loadedCampaigns);
 
     const initialBatch = loadedBatches[0] ?? null;
     setActiveBatchId(initialBatch?.id ?? null);
