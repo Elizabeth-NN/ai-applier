@@ -68,3 +68,38 @@ The application is organized into three main parts:
 3. **Chrome extension (`extension/`)** — browser-assisted preparation for supported application forms.
 
 The frontend communicates with the FastAPI backend. The backend persists application and candidate data in PostgreSQL. Database schema changes are managed through Alembic migrations.
+
+## Prerequisites
+
+- Python 3.11 or a compatible version supported by the backend dependencies.
+- Node.js and npm.
+- PostgreSQL.
+- A Clerk application for authentication.
+
+## Local development setup
+
+### 1. Backend
+
+From the repository root, run:
+
+    cd backend
+    python3 -m venv .venv
+    source .venv/bin/activate
+    python -m pip install -r requirements.txt
+
+Create `backend/.env` with your database and Clerk credentials:
+
+    DB_HOST=localhost
+    DB_PORT=5432
+    DB_NAME=ai_applier
+    DB_USER=postgres
+    DB_PASSWORD=your_database_password
+    CLERK_SECRET_KEY=your_clerk_secret_key
+
+Optional settings:
+
+    GEMINI_API_KEY=
+    GEMINI_MODEL=gemma-4-26b-a4b-it
+    JOBICY_STATUS_SYNC_ENABLED=false
+    JOBICY_STATUS_SYNC_INTERVAL_HOURS=12
+
