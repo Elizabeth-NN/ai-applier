@@ -1646,6 +1646,165 @@ def test_himalayas_ingestion_start_requires_admin(job_context):
     finally:
         db.close()
 
+
+def test_himalayas_ingestion_resume_preserves_saved_progress(job_context):
+    from datetime import datetime, timezone
+    from app.models import AutomationRun, AutomationTask, HimalayasIngestionState
+
+    expiry_marker = datetime.now(timezone.utc)
+
+    db = job_context.testing_session()
+    try:
+        previous_run = AutomationRun(
+            user_id=None,
+            pipeline_type="himalayas_ingestion",
+            trigger_type="manual",
+            status="failed",
+            summary={"pages_fetched": 875, "fetched": 17500},
+        )
+        db.add(previous_run)
+        db.flush()
+
+        db.add(AutomationTask(
+            run_id=previous_run.id,
+            user_id=None,
+            task_type="ingest_himalayas_batch",
+            status="failed",
+            idempotency_key="initial-batch",
+            payload={"max_pages": 25},
+            attempts=3,
+            max_attempts=3,
+        ))
+        db.add(HimalayasIngestionState(
+            id=1,
+            cursor="saved-cursor",
+            automation_run_id=previous_run.id,
+            status="running",
+            pages_fetched=875,
+            fetched=17500,
+            inserted=7014,
+            updated=10486,
+            expired=0,
+            processed_batches={"4935": {"pages_fetched": 25}},
+            expiry_reconciled_at=expiry_marker,
+        ))
+        db.commit()
+        previous_run_id = previous_run.id
+    finally:
+        db.close()
+
+    response = job_context.post("/api/jobs/ingest/himalayas/resume")
+
+    assert response.status_code == 202
+    data = response.json()
+    assert data["resumed"] is True
+    assert data["previous_run_id"] == previous_run_id
+    assert data["pipeline_type"] == "himalayas_ingestion"
+    assert data["status"] == "queued"
+    assert data["task_status"] == "queued"
+    assert data["max_pages"] == 25
+
+    db = job_context.testing_session()
+    try:
+        run = db.get(AutomationRun, data["run_id"])
+        task = db.get(AutomationTask, data["task_id"])
+        state = db.get(HimalayasIngestionState, 1)
+
+        assert run is not None
+        assert run.id != previous_run_id
+        assert run.status == "queued"
+        assert run.pipeline_type == "himalayas_ingestion"
+
+        assert task is not None
+        assert task.run_id == run.id
+        assert task.task_type == "ingest_himalayas_batch"
+        assert task.status == "queued"
+        assert task.idempotency_key == "initial-batch"
+        assert task.payload == {"max_pages": 25}
+
+        assert state.automation_run_id == run.id
+        assert state.status == "running"
+        assert state.cursor == "saved-cursor"
+        assert state.pages_fetched == 875
+        assert state.fetched == 17500
+        assert state.inserted == 7014
+        assert state.updated == 10486
+        assert state.expired == 0
+        assert state.processed_batches == {"4935": {"pages_fetched": 25}}
+        assert state.expiry_reconciled_at == expiry_marker
+        assert state.completed_at is None
+    finally:
+        db.close()
+
+
+def test_himalayas_ingestion_resume_rejects_missing_cursor(job_context):
+    from app.models import AutomationRun, HimalayasIngestionState
+
+    db = job_context.testing_session()
+    try:
+        run = AutomationRun(
+            user_id=None,
+            pipeline_type="himalayas_ingestion",
+            trigger_type="manual",
+            status="failed",
+            summary={},
+        )
+        db.add(run)
+        db.flush()
+        db.add(HimalayasIngestionState(
+            id=1,
+            cursor=None,
+            automation_run_id=run.id,
+            status="running",
+            processed_batches={},
+        ))
+        db.commit()
+    finally:
+        db.close()
+
+    response = job_context.post("/api/jobs/ingest/himalayas/resume")
+
+    assert response.status_code == 409
+
+
+def test_himalayas_ingestion_resume_rejects_active_task(job_context):
+    from app.models import AutomationRun, AutomationTask, HimalayasIngestionState
+
+    db = job_context.testing_session()
+    try:
+        run = AutomationRun(
+            user_id=None,
+            pipeline_type="himalayas_ingestion",
+            trigger_type="manual",
+            status="failed",
+            summary={},
+        )
+        db.add(run)
+        db.flush()
+        db.add(AutomationTask(
+            run_id=run.id,
+            user_id=None,
+            task_type="ingest_himalayas_batch",
+            status="queued",
+            idempotency_key="pending-batch",
+            payload={"max_pages": 25},
+            max_attempts=3,
+        ))
+        db.add(HimalayasIngestionState(
+            id=1,
+            cursor="saved-cursor",
+            automation_run_id=run.id,
+            status="running",
+            processed_batches={},
+        ))
+        db.commit()
+    finally:
+        db.close()
+
+    response = job_context.post("/api/jobs/ingest/himalayas/resume")
+
+    assert response.status_code == 409
+
 def test_screening_start_creates_durable_run_and_task(job_context):
     from app.models import AutomationRun, AutomationTask, Resume
 
