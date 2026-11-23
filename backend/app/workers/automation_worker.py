@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.db.session import SessionLocal
 from app.models import AutomationRun, AutomationTask
+from app.services.himalayas_adapter import HimalayasAPIError
 from app.services.automation_queue import (
     claim_next_task,
     complete_automation_task,
@@ -31,6 +32,7 @@ RECOVERY_INTERVAL_SECONDS = 30
 LEASE_SECONDS = 300
 HEARTBEAT_SECONDS = 30
 HEARTBEAT_RETRY_SECONDS = 5
+HIMALAYAS_RATE_LIMIT_RETRY_SECONDS = 900
 
 
 def _utc_now() -> datetime:
@@ -558,11 +560,24 @@ def process_one_task(worker_id: str) -> bool:
         if not lease_lost.is_set():
             try:
                 with SessionLocal() as db:
+                    retry_delay_seconds = 60
+                    if (
+                        task_type == "ingest_himalayas_batch"
+                        and isinstance(exc, HimalayasAPIError)
+                        and exc.status_code == 429
+                    ):
+                        retry_delay_seconds = (
+                            exc.retry_after_seconds
+                            if exc.retry_after_seconds is not None
+                            else HIMALAYAS_RATE_LIMIT_RETRY_SECONDS
+                        )
+
                     failed_task = fail_automation_task(
                         db,
                         task_id=task_id,
                         worker_id=worker_id,
                         error=str(exc),
+                        retry_delay_seconds=retry_delay_seconds,
                     )
                     logger.warning(
                         "Task %s ended with status %s (attempt %s/%s).",

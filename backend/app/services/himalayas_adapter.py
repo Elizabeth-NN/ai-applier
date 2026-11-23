@@ -1,6 +1,8 @@
 """Fetch and normalize jobs from the public Himalayas jobs API."""
 
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
+import math
 from urllib.parse import urlparse
 
 import httpx
@@ -15,6 +17,39 @@ REQUEST_TIMEOUT_SECONDS = 30.0
 
 class HimalayasAPIError(RuntimeError):
     """Raised when the Himalayas API returns an invalid or incomplete feed."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        retry_after_seconds: int | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.retry_after_seconds = retry_after_seconds
+
+
+def _retry_after_seconds(value: str | None) -> int | None:
+    """Parse Retry-After as seconds or an HTTP date."""
+    if not value:
+        return None
+
+    try:
+        return max(0, math.ceil(float(value)))
+    except (ValueError, OverflowError):
+        pass
+
+    try:
+        retry_at = parsedate_to_datetime(value)
+        if retry_at.tzinfo is None:
+            retry_at = retry_at.replace(tzinfo=timezone.utc)
+        return max(
+            0,
+            math.ceil((retry_at - datetime.now(timezone.utc)).total_seconds()),
+        )
+    except (TypeError, ValueError, OverflowError):
+        return None
 
 
 def _required_text(raw: dict, key: str) -> str:
@@ -257,6 +292,15 @@ def fetch_himalayas_batch(
                 response = client.get(HIMALAYAS_API_URL, params=params)
                 response.raise_for_status()
                 payload = response.json()
+            except httpx.HTTPStatusError as exc:
+                response = exc.response
+                raise HimalayasAPIError(
+                    f"Himalayas API returned HTTP {response.status_code}",
+                    status_code=response.status_code,
+                    retry_after_seconds=_retry_after_seconds(
+                        response.headers.get("Retry-After")
+                    ),
+                ) from exc
             except (httpx.HTTPError, ValueError) as exc:
                 raise HimalayasAPIError(
                     "Could not retrieve a valid Himalayas API response"
