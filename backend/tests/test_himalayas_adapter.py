@@ -258,6 +258,32 @@ def test_fetch_himalayas_batch_resumes_from_given_cursor():
     assert result["next_cursor"] is None
 
 
+@pytest.mark.parametrize(
+    ("retry_after", "expected_seconds"),
+    [
+        ("120", 120),
+        (None, None),
+        ("not-a-date", None),
+    ],
+)
+def test_fetch_himalayas_batch_preserves_rate_limit_details(
+    retry_after,
+    expected_seconds,
+):
+    from app.services.himalayas_adapter import fetch_himalayas_batch
+
+    def handler(_request):
+        headers = {"Retry-After": retry_after} if retry_after else {}
+        return httpx.Response(429, headers=headers)
+
+    with make_client(handler) as client:
+        with pytest.raises(HimalayasAPIError) as error:
+            fetch_himalayas_batch(max_pages=1, client=client)
+
+    assert error.value.status_code == 429
+    assert error.value.retry_after_seconds == expected_seconds
+
+
 @pytest.mark.parametrize("max_pages", [0, -1, 26])
 def test_fetch_himalayas_batch_rejects_out_of_range_page_limit(max_pages):
     from app.services.himalayas_adapter import fetch_himalayas_batch

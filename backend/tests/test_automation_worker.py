@@ -590,6 +590,61 @@ def test_process_one_task_requeues_retryable_failure(db, monkeypatch):
     assert run.finished_at is None
 
 
+@pytest.mark.parametrize(
+    ("retry_after_seconds", "expected_delay"),
+    [
+        (420, 420),
+        (None, 900),
+    ],
+)
+def test_himalayas_rate_limit_uses_retry_after_delay(
+    db,
+    monkeypatch,
+    retry_after_seconds,
+    expected_delay,
+):
+    from app.services.himalayas_adapter import HimalayasAPIError
+
+    _run, task, _resume, _jobs = prepare_queued_task(
+        db,
+        max_attempts=2,
+    )
+    task.task_type = "ingest_himalayas_batch"
+    db.commit()
+    configure_worker_sessions(db, monkeypatch)
+
+    captured = {}
+    original_fail = automation_worker.fail_automation_task
+
+    def capture_failure(db, **kwargs):
+        captured["retry_delay_seconds"] = kwargs["retry_delay_seconds"]
+        return original_fail(db, **kwargs)
+
+    def rate_limited(*args, **kwargs):
+        raise HimalayasAPIError(
+            "Himalayas API returned HTTP 429",
+            status_code=429,
+            retry_after_seconds=retry_after_seconds,
+        )
+
+    monkeypatch.setattr(
+        automation_worker,
+        "fail_automation_task",
+        capture_failure,
+    )
+    monkeypatch.setattr(
+        automation_worker,
+        "process_himalayas_ingestion_task",
+        rate_limited,
+    )
+
+    assert automation_worker.process_one_task("worker-1") is True
+
+    db.refresh(task)
+    assert task.status == "queued"
+    assert captured["retry_delay_seconds"] == expected_delay
+
+
 def test_process_one_task_marks_exhausted_failure_and_run_failed(
     db,
     monkeypatch,
