@@ -1149,6 +1149,127 @@ def start_himalayas_ingestion(
 
 
 @router.post(
+    "/ingest/himalayas/resume",
+    status_code=status.HTTP_202_ACCEPTED,
+    responses={
+        401: {"description": "Authentication is required."},
+        403: {"description": "Admin access is required."},
+        409: {"description": "The saved Himalayas scan cannot be resumed."},
+    },
+)
+def resume_himalayas_ingestion(
+    _admin_id: CurrentAdmin,
+    db: Session = Depends(get_db),
+):
+    """Resume a failed automated scan from its last committed cursor."""
+    now = datetime.now(timezone.utc)
+
+    try:
+        state = db.scalar(
+            select(HimalayasIngestionState)
+            .where(HimalayasIngestionState.id == 1)
+            .with_for_update()
+        )
+
+        if state is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="No saved Himalayas ingestion state exists.",
+            )
+
+        if state.status != "running" or not state.cursor:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "Himalayas ingestion can only resume from a running "
+                    "state with a saved cursor."
+                ),
+            )
+
+        if state.automation_run_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="The saved scan has no automation run to resume.",
+            )
+
+        previous_run = db.get(AutomationRun, state.automation_run_id)
+        if (
+            previous_run is None
+            or previous_run.pipeline_type != "himalayas_ingestion"
+            or previous_run.status != "failed"
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="The previous Himalayas ingestion run is not failed.",
+            )
+
+        active_task = db.scalar(
+            select(AutomationTask.id)
+            .where(
+                AutomationTask.run_id == previous_run.id,
+                AutomationTask.task_type == "ingest_himalayas_batch",
+                AutomationTask.status.in_(["queued", "running"]),
+            )
+            .limit(1)
+        )
+        if active_task is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="The previous Himalayas run still has an active task.",
+            )
+
+        run = AutomationRun(
+            user_id=None,
+            pipeline_type="himalayas_ingestion",
+            trigger_type="manual",
+            status="queued",
+            summary={},
+        )
+        db.add(run)
+        db.flush()
+
+        task = AutomationTask(
+            run_id=run.id,
+            user_id=None,
+            task_type="ingest_himalayas_batch",
+            status="queued",
+            idempotency_key="initial-batch",
+            payload={"max_pages": 25},
+            max_attempts=3,
+        )
+        db.add(task)
+
+        # Preserve cursor, counters, replay history, and expiry marker.
+        state.automation_run_id = run.id
+        state.status = "running"
+        state.started_at = now
+        state.updated_at = now
+        state.completed_at = None
+
+        db.commit()
+        db.refresh(run)
+        db.refresh(task)
+
+        return {
+            "run_id": run.id,
+            "task_id": task.id,
+            "previous_run_id": previous_run.id,
+            "pipeline_type": run.pipeline_type,
+            "status": run.status,
+            "task_status": task.status,
+            "max_pages": 25,
+            "resumed": True,
+        }
+
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception:
+        db.rollback()
+        raise
+
+
+@router.post(
     "/ingest/himalayas/batch",
     response_model=HimalayasBatchIngestionResult,
     responses={
