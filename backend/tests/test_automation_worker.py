@@ -996,3 +996,28 @@ def test_durable_screening_rejects_resume_owned_by_another_user(db):
             user_id="another-user",
             resume_id=resume.id,
         )
+
+
+def test_run_worker_stops_without_claiming_tasks_when_shutdown_requested(
+    monkeypatch,
+):
+    stop_event = threading.Event()
+    stop_event.set()
+    claimed_tasks = []
+
+    def fake_process(worker_id):
+        claimed_tasks.append(worker_id)
+        return False
+
+    monkeypatch.setattr(
+        automation_worker,
+        "process_one_task",
+        fake_process,
+    )
+
+    automation_worker.run_worker(
+        worker_id="shutdown-test-worker",
+        stop_event=stop_event,
+    )
+
+    assert claimed_tasks == []
