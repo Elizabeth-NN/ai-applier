@@ -103,3 +103,48 @@ Optional settings:
     JOBICY_STATUS_SYNC_ENABLED=false
     JOBICY_STATUS_SYNC_INTERVAL_HOURS=12
 
+
+### Database migrations
+
+With the backend virtual environment activated:
+
+    cd backend
+    alembic upgrade head
+
+### 2. Frontend
+
+Open a separate terminal:
+
+    cd ~/Development/code/personal/ai-applier/frontend
+    npm install
+
+Create `frontend/.env.local`:
+
+    NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=your_clerk_publishable_key
+    CLERK_SECRET_KEY=your_clerk_secret_key
+    NEXT_PUBLIC_CLERK_SIGN_IN_URL=/sign-in
+    NEXT_PUBLIC_CLERK_SIGN_UP_URL=/sign-up
+    NEXT_PUBLIC_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL=/dashboard
+    NEXT_PUBLIC_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL=/dashboard
+    NEXT_PUBLIC_API_URL=http://localhost:8000
+
+Start the frontend:
+
+    npm run dev
+
+The dashboard should be available at `http://localhost:3000`.
+
+### 3. Chrome extension
+
+The extension is located in `extension/`.
+
+To load it in Chrome:
+
+1. Open `chrome://extensions`.
+2. Enable **Developer mode**.
+3. Select **Load unpacked**.
+4. Select the repository's `extension/` directory.
+5. Use the extension on a supported application form.
+
+The extension assists with application preparation. It does not automatically submit applications.
+
