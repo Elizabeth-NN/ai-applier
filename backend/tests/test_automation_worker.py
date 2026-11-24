@@ -1177,3 +1177,73 @@ def test_run_worker_once_stops_when_queue_is_empty(monkeypatch):
 def test_run_worker_once_rejects_invalid_attempt_limit():
     with pytest.raises(ValueError, match="max_tasks must be at least 1"):
         automation_worker.run_worker_once(max_tasks=0)
+
+
+def test_process_one_task_keeps_run_queued_until_successor_completes(
+    db,
+    monkeypatch,
+):
+    run, first_task, resume, _jobs = create_screening_task(db)
+
+    # Make the initial task available for the worker to claim.
+    first_task.status = "queued"
+    first_task.locked_by = None
+    first_task.locked_until = None
+    db.commit()
+
+    configure_worker_sessions(db, monkeypatch)
+
+    calls = []
+
+    def fake_process(db, task_id, *, worker_id, lease_lost=None):
+        calls.append(task_id)
+
+        if task_id == first_task.id:
+            successor, created = enqueue_automation_task(
+                db,
+                run_id=run.id,
+                user_id="user-1",
+                task_type="screen_jobs",
+                idempotency_key="screen-after-test-successor",
+                payload={"resume_id": resume.id},
+            )
+            assert created is True
+            return {"successor_task_id": successor.id}
+
+        return {"processed_count": 1}
+
+    monkeypatch.setattr(
+        automation_worker,
+        "process_screening_task",
+        fake_process,
+    )
+
+    # First task completes, but its successor is still queued.
+    assert automation_worker.process_one_task("worker-1") is True
+
+    db.refresh(first_task)
+    db.refresh(run)
+
+    successor = db.scalar(
+        select(AutomationTask).where(
+            AutomationTask.idempotency_key
+            == "screen-after-test-successor"
+        )
+    )
+
+    assert first_task.status == "succeeded"
+    assert successor is not None
+    assert successor.status == "queued"
+    assert run.status == "queued"
+    assert run.finished_at is None
+
+    # The successor completes; only now may the parent run succeed.
+    assert automation_worker.process_one_task("worker-1") is True
+
+    db.refresh(successor)
+    db.refresh(run)
+
+    assert successor.status == "succeeded"
+    assert run.status == "succeeded"
+    assert run.finished_at is not None
+    assert calls == [first_task.id, successor.id]
