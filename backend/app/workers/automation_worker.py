@@ -35,6 +35,8 @@ LEASE_SECONDS = 300
 HEARTBEAT_SECONDS = 30
 HEARTBEAT_RETRY_SECONDS = 5
 HIMALAYAS_RATE_LIMIT_RETRY_SECONDS = 900
+SCREENING_BATCH_SIZE = 100
+SCREENING_MAX_BATCHES_PER_TASK = 2
 
 
 def _utc_now() -> datetime:
@@ -60,6 +62,7 @@ def process_screening_task(
     )
     from app.schemas.job import JobScreeningItem
     from app.services.automation_screening import save_screening_results
+    from app.services.automation_queue import enqueue_automation_task
     from app.services.job_screening import screen_job
 
     from app.services.durable_job_screening import (
@@ -192,7 +195,9 @@ def process_screening_task(
     }
     db.commit()
 
-    while True:
+    batches_processed = 0
+
+    while batches_processed < SCREENING_MAX_BATCHES_PER_TASK:
         if lease_lost is not None and lease_lost.is_set():
             raise RuntimeError("Task lease was lost during screening.")
 
@@ -200,7 +205,7 @@ def process_screening_task(
             db,
             context=context,
             last_job_id=last_job_id,
-            batch_size=100,
+            batch_size=SCREENING_BATCH_SIZE,
         )
 
         if not items:
@@ -252,6 +257,7 @@ def process_screening_task(
         review += batch_review
         excluded += batch_excluded
         last_job_id = max(item["id"] for item in items)
+        batches_processed += 1
 
         run.summary = {
             **(run.summary or {}),
@@ -265,9 +271,29 @@ def process_screening_task(
         }
         db.commit()
 
+    if lease_lost is not None and lease_lost.is_set():
+        raise RuntimeError("Task lease was lost before continuation.")
+
+    successor_id = None
+    has_more = (
+        batches_processed == SCREENING_MAX_BATCHES_PER_TASK
+        and processed < expected_total
+    )
+
+    if has_more:
+        successor, _created = enqueue_automation_task(
+            db,
+            run_id=run.id,
+            user_id=task.user_id,
+            task_type="screen_jobs",
+            idempotency_key=f"screen-after-{last_job_id}",
+            payload={"resume_id": resume_id},
+        )
+        successor_id = successor.id
+
     run.summary = {
         **(run.summary or {}),
-        "phase": "completed",
+        "phase": "screening" if has_more else "completed",
         "expected_total": expected_total,
         "processed_count": processed,
         "prioritized_count": prioritized,
@@ -284,6 +310,7 @@ def process_screening_task(
         "prioritized_count": prioritized,
         "review_count": review,
         "excluded_count": excluded,
+        **({"successor_task_id": successor_id} if successor_id is not None else {}),
     }
 
 
