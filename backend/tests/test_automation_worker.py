@@ -191,7 +191,6 @@ def test_screening_worker_persists_results_and_updates_run_summary(
     assert [call["last_job_id"] for call in batch_calls] == [
         0,
         jobs[0].id,
-        jobs[1].id,
     ]
     assert all(call["batch_size"] == 100 for call in batch_calls)
 
@@ -220,6 +219,71 @@ def test_screening_worker_persists_results_and_updates_run_summary(
     assert run.summary["processed_count"] == 2
     assert run.summary["review_count"] == 2
     assert run.summary["phase"] == "completed"
+
+def test_screening_worker_queues_successor_after_two_batches(
+    db,
+    monkeypatch,
+):
+    run, task, resume, jobs = create_screening_task(db, job_count=201)
+
+    items = [make_match_item(job) for job in jobs]
+
+    def fake_prepare(db, *, user_id, resume_id, max_job_id):
+        return {
+            "expected_total": len(items),
+            "max_job_id": max_job_id,
+            "profile_data": {
+                "target_roles": [],
+                "work_preferences": {},
+            },
+        }
+
+    def fake_score(db, *, context, last_job_id, batch_size):
+        return [
+            item for item in items
+            if item["id"] > last_job_id
+        ][:batch_size]
+
+    monkeypatch.setattr(
+        "app.services.durable_job_screening.prepare_durable_screening_context",
+        fake_prepare,
+    )
+    monkeypatch.setattr(
+        "app.services.durable_job_screening.score_durable_screening_batch",
+        fake_score,
+    )
+
+    result = process_screening_task(
+        db,
+        task.id,
+        worker_id="worker-1",
+    )
+
+    assert result["total"] == 201
+    assert result["processed_count"] == 200
+    assert result["review_count"] == 200
+    assert result["successor_task_id"] is not None
+
+    saved = db.scalars(
+        select(AutomationScreeningResult).where(
+            AutomationScreeningResult.run_id == run.id
+        )
+    ).all()
+    assert len(saved) == 200
+
+    successor = db.get(AutomationTask, result["successor_task_id"])
+    assert successor is not None
+    assert successor.status == "queued"
+    assert successor.task_type == "screen_jobs"
+    assert successor.user_id == "user-1"
+    assert successor.payload == {"resume_id": resume.id}
+    assert successor.idempotency_key == f"screen-after-{jobs[199].id}"
+
+    db.refresh(run)
+    assert run.summary["phase"] == "screening"
+    assert run.summary["processed_count"] == 200
+    assert run.summary["last_job_id"] == jobs[199].id
+
 
 def test_screening_worker_resumes_after_persisted_results(
     db,
