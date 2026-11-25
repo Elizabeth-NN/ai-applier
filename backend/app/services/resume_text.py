@@ -9,11 +9,9 @@ from fastapi import HTTPException
 from pypdf import PdfReader
 
 
-def extract_resume_text(path: Path, filename: str) -> str:
-    """Extract readable text from a PDF or DOCX resume."""
+def extract_resume_text_from_bytes(content: bytes, filename: str) -> str:
+    """Extract readable text from PDF or DOCX resume bytes."""
     try:
-        content = path.read_bytes()
-
         if filename.lower().endswith(".pdf"):
             reader = PdfReader(BytesIO(content))
 
@@ -74,3 +72,16 @@ def extract_resume_text(path: Path, filename: str) -> str:
         )
 
     return text[:8000]
+
+
+def extract_resume_text(path: Path | bytes, filename: str) -> str:
+    """Extract readable text from a path or already-loaded resume bytes."""
+    try:
+        content = path if isinstance(path, bytes) else path.read_bytes()
+    except OSError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail="The selected resume could not be read. Upload a valid PDF or DOCX.",
+        ) from exc
+
+    return extract_resume_text_from_bytes(content, filename)
