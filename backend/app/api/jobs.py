@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 
 from app.core.auth import CurrentAdmin, CurrentUser
 from app.api import resumes as resumes_api
+from app.services import resume_storage
 from app.db.dependencies import get_db
 from app.models.candidate_profile import CandidateProfile
 from app.models.job import Job
@@ -526,18 +527,24 @@ def match_jobs_to_resume(
     """Rank stored jobs by text overlap with the authenticated user's resume."""
     # Resolve the resume using both its ID and the authenticated owner.
     resume = resumes_api._owned_resume(resume_id, user_id, db)
-    storage_dir = resumes_api.STORAGE_DIR.resolve()
-    stored_path = (storage_dir / resume.storage_key).resolve()
-
-    if stored_path.parent != storage_dir or not stored_path.is_file():
+    try:
+        resume_bytes = resume_storage.read_resume(
+            resume.storage_key,
+            local_dir=resumes_api.STORAGE_DIR,
+        )
+    except (FileNotFoundError, ValueError):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Resume file not found",
         )
+    except OSError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="The selected resume file could not be read.",
+        ) from exc
 
-    # Read the current matching inputs before checking the cache.
-    # Hashing the file detects changed contents even if its record is unchanged.
-    resume_sha256 = hashlib.sha256(stored_path.read_bytes()).hexdigest()
+    # Hash the current contents so changed resume bytes invalidate the cache.
+    resume_sha256 = hashlib.sha256(resume_bytes).hexdigest()
 
     candidate_profile = db.scalar(
         select(CandidateProfile).where(
@@ -588,7 +595,7 @@ def match_jobs_to_resume(
 
     if scored is None:
         resume_text = extract_resume_text(
-            stored_path,
+            resume_bytes,
             resume.original_filename,
         )
 
