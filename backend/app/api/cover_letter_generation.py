@@ -14,6 +14,7 @@ from app.db.dependencies import get_db
 from app.models.application import Application
 from app.models.job import Job
 from app.models.resume import Resume
+from app.services import resume_storage
 from app.services.resume_text import extract_resume_text
 
 
@@ -118,18 +119,20 @@ def generate_cover_letter(
     if resume is None:
         raise HTTPException(status_code=404, detail="Resume not found.")
 
-    storage_dir = Path(
-        os.environ.get(
-            "RESUME_STORAGE_DIR",
-            str(Path(__file__).resolve().parents[2] / "private_uploads"),
+    try:
+        resume_bytes = resume_storage.read_resume(resume.storage_key)
+    except (FileNotFoundError, ValueError):
+        raise HTTPException(
+            status_code=404,
+            detail="Stored resume file not found.",
         )
-    ).resolve()
-    resume_path = (storage_dir / resume.storage_key).resolve()
+    except OSError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail="The selected resume file could not be read.",
+        ) from exc
 
-    if resume_path.parent != storage_dir or not resume_path.is_file():
-        raise HTTPException(status_code=404, detail="Stored resume file not found.")
-
-    resume_text = extract_resume_text(resume_path, resume.original_filename)
+    resume_text = extract_resume_text(resume_bytes, resume.original_filename)
 
     prompt = f"""
 Write a tailored cover letter for the job below using the supplied resume.
