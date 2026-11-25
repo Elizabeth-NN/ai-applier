@@ -4,9 +4,23 @@ import os
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from dotenv import dotenv_values
+
+
+def _env_file() -> Path:
+    return Path(__file__).resolve().parents[2] / ".env"
+
+
+def _setting(name: str, default: str = "") -> str:
+    if name in os.environ:
+        return os.environ[name]
+    values = dotenv_values(_env_file())
+    value = values.get(name)
+    return default if value is None else value
+
 
 def _backend() -> str:
-    value = os.environ.get("RESUME_STORAGE_BACKEND", "local").strip().lower()
+    value = _setting("RESUME_STORAGE_BACKEND", "local").strip().lower()
     if value not in {"local", "r2"}:
         raise RuntimeError(
             "RESUME_STORAGE_BACKEND must be either 'local' or 'r2'."
@@ -18,7 +32,7 @@ def _local_dir(override: Path | None = None) -> Path:
     if override is not None:
         return Path(override).resolve()
 
-    configured = os.environ.get("RESUME_STORAGE_DIR")
+    configured = _setting("RESUME_STORAGE_DIR")
     if configured:
         return Path(configured).resolve()
 
@@ -48,7 +62,7 @@ def _r2_settings() -> dict[str, str]:
         "secret_access_key": "R2_SECRET_ACCESS_KEY",
     }
     values = {
-        key: os.environ.get(env_name, "").strip()
+        key: _setting(env_name).strip()
         for key, env_name in names.items()
     }
     missing = [
@@ -79,14 +93,14 @@ def _s3_client() -> tuple[Any, str]:
         endpoint_url=config["endpoint_url"],
         aws_access_key_id=config["access_key_id"],
         aws_secret_access_key=config["secret_access_key"],
-        region_name=os.environ.get("R2_REGION", "auto"),
+        region_name=_setting("R2_REGION", "auto").strip() or "auto",
     )
     return client, config["bucket"]
 
 
 def _object_key(key: str) -> str:
     safe_key = _safe_key(key)
-    prefix = os.environ.get("R2_PREFIX", "").strip("/")
+    prefix = _setting("R2_PREFIX").strip("/")
     return f"{prefix}/{safe_key}" if prefix else safe_key
 
 
