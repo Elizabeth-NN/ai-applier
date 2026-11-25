@@ -27,3 +27,6 @@ backend/backups/
 
 # Private user-uploaded documents
 backend/private_uploads/
+
+# Local database backups
+/backups/
