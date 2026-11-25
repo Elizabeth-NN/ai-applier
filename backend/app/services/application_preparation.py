@@ -22,6 +22,7 @@ from app.models.application_execution import ApplicationExecution
 from app.models.cover_letter_draft import CoverLetterDraft
 from app.models.job import Job
 from app.models.resume import Resume
+from app.services import resume_storage
 from app.services.resume_text import extract_resume_text
 
 
@@ -230,16 +231,17 @@ def prepare_application_execution(
         raise HTTPException(status_code=404, detail="Resume not found.")
 
     storage_dir = _resume_storage_dir()
-    resume_path = (storage_dir / resume.storage_key).resolve()
 
-    if resume_path.parent != storage_dir or not resume_path.is_file():
+    try:
+        resume_bytes = resume_storage.read_resume(
+            resume.storage_key,
+            local_dir=storage_dir,
+        )
+    except (FileNotFoundError, ValueError) as exc:
         raise HTTPException(
             status_code=404,
             detail="Stored resume file not found.",
-        )
-
-    try:
-        resume_bytes = resume_path.read_bytes()
+        ) from exc
     except OSError as exc:
         raise HTTPException(
             status_code=422,
@@ -254,7 +256,7 @@ def prepare_application_execution(
 
     # Validate that the file contains readable resume text.
     # The extracted text is deliberately not persisted in the execution record.
-    extract_resume_text(resume_path, resume.original_filename)
+    extract_resume_text(resume_bytes, resume.original_filename)
     resume_sha256 = hashlib.sha256(resume_bytes).hexdigest()
 
     cover_letter = None
