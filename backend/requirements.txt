@@ -10,3 +10,4 @@ clerk-backend-api
 python-multipart
 pypdf>=5.0.0
 APScheduler>=3.10,<4.0
+python-dotenv

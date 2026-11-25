@@ -87,6 +87,14 @@ From the repository root, run:
     source .venv/bin/activate
     python -m pip install -r requirements.txt
 
+For optional Cloudflare R2 resume storage, install the additional dependency set:
+
+    python -m pip install -r requirements-r2.txt
+
+Keep `RESUME_STORAGE_BACKEND=local` for local filesystem storage. To use R2,
+configure the `R2_*` values documented in `backend/.env.example` and explicitly
+set `RESUME_STORAGE_BACKEND=r2`. Resume objects are stored privately.
+
 Create `backend/.env` with your database and Clerk credentials:
 
     DB_HOST=localhost
