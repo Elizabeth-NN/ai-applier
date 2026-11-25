@@ -6,6 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api import resumes as resumes_api
+from app.services import resume_storage
 from app.models.candidate_profile import CandidateProfile
 from app.models.job import Job
 from app.models.job_matching_corpus_state import JobMatchingCorpusState
@@ -43,9 +44,18 @@ def prepare_durable_screening_context(
     if resume is None:
         raise ValueError("Resume not found or does not belong to this user.")
 
-    stored_path = resumes_api._resolve_stored_path(resume)
+    try:
+        resume_bytes = resume_storage.read_resume(
+            resume.storage_key,
+            local_dir=resumes_api.STORAGE_DIR,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        raise ValueError("Stored resume file not found.") from exc
+    except OSError as exc:
+        raise ValueError("Stored resume file could not be read.") from exc
+
     resume_text = extract_resume_text(
-        stored_path,
+        resume_bytes,
         resume.original_filename,
     )
 

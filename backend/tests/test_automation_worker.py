@@ -956,8 +956,8 @@ def test_durable_screening_prepares_resume_profile_and_corpus(
     db.commit()
 
     monkeypatch.setattr(
-        "app.services.durable_job_screening.resumes_api._resolve_stored_path",
-        lambda resume: Path("/tmp/resume.pdf"),
+        "app.services.durable_job_screening.resume_storage.read_resume",
+        lambda key, local_dir=None: b"test resume bytes",
     )
     monkeypatch.setattr(
         "app.services.durable_job_screening.extract_resume_text",
