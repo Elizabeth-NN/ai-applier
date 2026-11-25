@@ -17,7 +17,7 @@ jobs:
   process-automation-queue:
     name: Process queued automation tasks
     runs-on: ubuntu-latest
-    timeout-minutes: 55
+    timeout-minutes: 10
 
     steps:
       - name: Check out repository
@@ -41,4 +41,4 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
         run: |
-          python -m app.workers.automation_worker --once --max-tasks 10
+          python -m app.workers.automation_worker --once --max-tasks 2
