@@ -23,26 +23,17 @@ def upgrade() -> None:
         sa.Column("title", sa.String(length=255), nullable=True),
     )
 
-    connection = op.get_bind()
-    rows = connection.execute(
+    op.execute(
         sa.text(
             """
-            SELECT drafts.id, jobs.title, jobs.company
-            FROM cover_letter_drafts AS drafts
-            JOIN applications ON applications.id = drafts.application_id
+            UPDATE cover_letter_drafts AS drafts
+            SET title = LEFT(jobs.title || ' — ' || jobs.company, 255)
+            FROM applications
             JOIN jobs ON jobs.id = applications.job_id
+            WHERE applications.id = drafts.application_id
             """
         )
-    ).all()
-
-    for draft_id, job_title, company in rows:
-        title = f"{job_title} — {company}"[:255]
-        connection.execute(
-            sa.text(
-                "UPDATE cover_letter_drafts SET title = :title WHERE id = :id"
-            ),
-            {"title": title, "id": draft_id},
-        )
+    )
 
     op.alter_column(
         "cover_letter_drafts",
