@@ -7,13 +7,14 @@ from io import BytesIO
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
-from fastapi.responses import FileResponse
+from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.auth import CurrentUser
 from app.db.dependencies import get_db
 from app.models.resume import Resume
+from app.services import resume_storage
 
 
 router = APIRouter(prefix="/api/resumes", tags=["Resumes"])
@@ -115,10 +116,15 @@ def _resolve_stored_path(resume: Resume) -> Path:
 
 
 def read_resume_bytes(resume: Resume) -> bytes:
-    stored_path = _resolve_stored_path(resume)
-    if not stored_path.is_file():
-        raise HTTPException(404, "Resume file not found")
-    return stored_path.read_bytes()
+    try:
+        return resume_storage.read_resume(
+            resume.storage_key,
+            local_dir=STORAGE_DIR,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(404, "Resume file not found") from exc
+    except ValueError as exc:
+        raise HTTPException(400, "Invalid resume storage key") from exc
 
 
 # ---------------------------------------------------------------------------
@@ -687,12 +693,16 @@ async def upload_resume(
 
     content_type = _validate_file(filename, bytes(content))
     storage_key = f"{uuid.uuid4().hex}{extension}"
-    STORAGE_DIR.mkdir(parents=True, exist_ok=True)
-    stored_path = STORAGE_DIR / storage_key
+    object_stored = False
 
     try:
-        with stored_path.open("xb") as destination:
-            destination.write(content)
+        resume_storage.put_resume(
+            storage_key,
+            bytes(content),
+            content_type=content_type,
+            local_dir=STORAGE_DIR,
+        )
+        object_stored = True
 
         resume = Resume(
             user_id=user_id,
@@ -706,7 +716,14 @@ async def upload_resume(
         db.refresh(resume)
     except Exception:
         db.rollback()
-        stored_path.unlink(missing_ok=True)
+        if object_stored:
+            try:
+                resume_storage.delete_resume(
+                    storage_key,
+                    local_dir=STORAGE_DIR,
+                )
+            except Exception:
+                pass
         raise
 
     return _resume_out(resume)
@@ -742,18 +759,22 @@ def download_resume(
     user_id: CurrentUser,
     db: Session = Depends(get_db),
 ):
+    from urllib.parse import quote
+
     resume = get_owned_resume(resume_id, user_id, db)
-    stored_path = _resolve_stored_path(resume)
+    content = read_resume_bytes(resume)
+    filename = _safe_filename(resume.original_filename)
 
-    if not stored_path.is_file():
-        raise HTTPException(404, "Resume file not found")
-
-    return FileResponse(
-        path=stored_path,
+    return Response(
+        content=content,
         media_type=resume.content_type,
-        filename=resume.original_filename,
-        content_disposition_type="attachment",
-        headers={"X-Content-Type-Options": "nosniff"},
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="{filename}"; '
+                f"filename*=UTF-8''{quote(resume.original_filename)}"
+            ),
+            "X-Content-Type-Options": "nosniff",
+        },
     )
 
 
@@ -764,9 +785,19 @@ def delete_resume(
     db: Session = Depends(get_db),
 ):
     resume = get_owned_resume(resume_id, user_id, db)
-    stored_path = _resolve_stored_path(resume)
 
     db.delete(resume)
     db.commit()
-    stored_path.unlink(missing_ok=True)
+
+    try:
+        resume_storage.delete_resume(
+            resume.storage_key,
+            local_dir=STORAGE_DIR,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            500,
+            "Resume record was deleted, but its stored file could not be removed.",
+        ) from exc
+
     return None
