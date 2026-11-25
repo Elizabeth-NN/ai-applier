@@ -1,6 +1,4 @@
-import os
 import re
-from pathlib import Path
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
