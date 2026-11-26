@@ -168,7 +168,7 @@ def test_delete_storage_failure_preserves_resume_record_and_file(
     resume_context, monkeypatch
 ):
     client = resume_context["client"]
-    created = upload(client, "keep.pdf", b"%PDF-1.7\\nkeep")
+    created = upload(client, "keep.pdf", b"%PDF-1.7\nkeep")
     assert created.status_code == 201
     resume_id = created.json()["id"]
 
@@ -192,4 +192,3 @@ def test_delete_storage_failure_preserves_resume_record_and_file(
         assert db.get(Resume, resume_id) is not None
 
     assert len(client.get("/api/resumes").json()) == 1
-\n
