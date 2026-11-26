@@ -224,4 +224,3 @@ def test_delete_database_commit_failure_restores_file_and_keeps_record(
 
     with resume_context["factory"]() as db:
         assert db.get(Resume, resume_id) is not None
-
