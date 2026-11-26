@@ -224,3 +224,29 @@ def test_delete_database_commit_failure_restores_file_and_keeps_record(
 
     with resume_context["factory"]() as db:
         assert db.get(Resume, resume_id) is not None
+
+def test_upload_database_and_storage_cleanup_failure_logs_orphan(
+    resume_context, monkeypatch, caplog
+):
+    client = resume_context["client"]
+
+    def fail_commit(self):
+        raise RuntimeError("Simulated upload database failure")
+
+    def fail_delete(*args, **kwargs):
+        raise OSError("Simulated storage cleanup failure")
+
+    monkeypatch.setattr(resumes_api.Session, "commit", fail_commit)
+    monkeypatch.setattr(
+        resumes_api.resume_storage, "delete_resume", fail_delete
+    )
+
+    with caplog.at_level("ERROR", logger="app.api.resumes"):
+        with pytest.raises(RuntimeError, match="Simulated upload database failure"):
+            upload(client, "orphan.pdf", b"%PDF-1.7\\norphan")
+
+    stored_files = list(resume_context["storage"].glob("*"))
+    assert len(stored_files) == 1
+    assert stored_files[0].read_bytes() == b"%PDF-1.7\\norphan"
+    assert "Failed to clean up resume storage" in caplog.text
+    assert client.get("/api/resumes").json() == []

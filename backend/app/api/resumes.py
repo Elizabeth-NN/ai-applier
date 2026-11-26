@@ -726,7 +726,11 @@ async def upload_resume(
                     local_dir=STORAGE_DIR,
                 )
             except Exception:
-                pass
+                logger.exception(
+                    "Failed to clean up resume storage after upload database failure "
+                    "(storage_key=%s)",
+                    storage_key,
+                )
         raise
 
     return _resume_out(resume)
