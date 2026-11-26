@@ -1,4 +1,5 @@
 import html
+import logging
 import os
 import re
 import uuid
@@ -16,6 +17,8 @@ from app.db.dependencies import get_db
 from app.models.resume import Resume
 from app.services import resume_storage
 
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/resumes", tags=["Resumes"])
 
@@ -785,10 +788,13 @@ def delete_resume(
     db: Session = Depends(get_db),
 ):
     resume = get_owned_resume(resume_id, user_id, db)
+    content = read_resume_bytes(resume)
+    storage_key = resume.storage_key
+    content_type = resume.content_type
 
     try:
         resume_storage.delete_resume(
-            resume.storage_key,
+            storage_key,
             local_dir=STORAGE_DIR,
         )
     except Exception as exc:
@@ -797,7 +803,35 @@ def delete_resume(
             "Resume file could not be removed. The resume record was retained; please retry.",
         ) from exc
 
-    db.delete(resume)
-    db.commit()
+    try:
+        db.delete(resume)
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+
+        try:
+            resume_storage.put_resume(
+                storage_key,
+                content,
+                content_type=content_type,
+                local_dir=STORAGE_DIR,
+            )
+        except Exception as restore_exc:
+            logger.exception(
+                "Failed to restore resume storage after database deletion failure "
+                "(resume_id=%s)",
+                resume_id,
+            )
+            raise HTTPException(
+                500,
+                "Resume deletion failed and its stored file could not be restored. "
+                "Please contact support.",
+            ) from restore_exc
+
+        raise HTTPException(
+            500,
+            "Resume could not be deleted from the database. "
+            "Its stored file was restored; please retry.",
+        ) from exc
 
     return None

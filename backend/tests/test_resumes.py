@@ -192,3 +192,36 @@ def test_delete_storage_failure_preserves_resume_record_and_file(
         assert db.get(Resume, resume_id) is not None
 
     assert len(client.get("/api/resumes").json()) == 1
+
+
+def test_delete_database_commit_failure_restores_file_and_keeps_record(
+    resume_context, monkeypatch
+):
+    client = resume_context["client"]
+    content = b"%PDF-1.7\\nrestore"
+    created = upload(client, "restore.pdf", content)
+    assert created.status_code == 201
+    resume_id = created.json()["id"]
+
+    with resume_context["factory"]() as db:
+        record = db.get(Resume, resume_id)
+        storage_key = record.storage_key
+
+    stored_path = resume_context["storage"] / storage_key
+    assert stored_path.read_bytes() == content
+
+    def fail_commit(self):
+        raise RuntimeError("Simulated database commit failure")
+
+    monkeypatch.setattr(resumes_api.Session, "commit", fail_commit)
+
+    response = client.delete(f"/api/resumes/{resume_id}")
+
+    assert response.status_code == 500
+    assert "restored" in response.json()["detail"]
+    assert stored_path.is_file()
+    assert stored_path.read_bytes() == content
+
+    with resume_context["factory"]() as db:
+        assert db.get(Resume, resume_id) is not None
+
