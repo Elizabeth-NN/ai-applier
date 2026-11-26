@@ -25,6 +25,46 @@ type ApiResume = {
   created_at: string;
 };
 
+function pendingResumeDeletionKey(userId: string) {
+  return `ai-applier:pending-resume-deletions:${userId}`;
+}
+
+function readPendingResumeDeletions(userId: string): ApiResume[] {
+  try {
+    const stored = localStorage.getItem(pendingResumeDeletionKey(userId));
+    const parsed: unknown = stored ? JSON.parse(stored) : [];
+
+    if (!Array.isArray(parsed)) return [];
+
+    return parsed.filter(
+      (item): item is ApiResume =>
+        item !== null &&
+        typeof item === "object" &&
+        typeof item.id === "number" &&
+        typeof item.original_filename === "string" &&
+        typeof item.content_type === "string" &&
+        typeof item.size_bytes === "number" &&
+        typeof item.created_at === "string",
+    );
+  } catch {
+    return [];
+  }
+}
+
+function writePendingResumeDeletions(userId: string, resumes: ApiResume[]) {
+  try {
+    const key = pendingResumeDeletionKey(userId);
+
+    if (resumes.length === 0) {
+      localStorage.removeItem(key);
+    } else {
+      localStorage.setItem(key, JSON.stringify(resumes));
+    }
+  } catch {
+    // Keep the in-memory retry option available if browser storage is unavailable.
+  }
+}
+
 type CoverLetterDraft = {
   id: number;
   application_id: number;
@@ -67,7 +107,7 @@ type MyDocumentsProps = {
 export default function MyDocuments({
   onOpenEditor,
 }: MyDocumentsProps) {
-  const { isLoaded, isSignedIn, getToken } = useAuth();
+  const { isLoaded, isSignedIn, userId, getToken } = useAuth();
 
   const [applications, setApplications] = useState<ApiApplication[]>([]);
   const [jobs, setJobs] = useState<ApiJob[]>([]);
@@ -83,7 +123,7 @@ export default function MyDocuments({
 
   useEffect(() => {
 
-    if (!isLoaded || !isSignedIn) return;
+    if (!isLoaded || !isSignedIn || !userId) return;
 
     let cancelled = false;
 
@@ -122,10 +162,19 @@ export default function MyDocuments({
         );
 
         if (!cancelled) {
+          const pendingDeletions = readPendingResumeDeletions(userId);
+          const visibleResumes = [
+            ...loadedResumes,
+            ...pendingDeletions.filter(
+              (pending) => !loadedResumes.some((resume) => resume.id === pending.id),
+            ),
+          ];
+
           setApplications(loadedApplications);
           setDrafts(loadedDrafts);
           setJobs(loadedJobs);
-          setResumes(loadedResumes);
+          setResumes(visibleResumes);
+          setRetryDeleteIds(pendingDeletions.map((resume) => resume.id));
         }
       } catch (err) {
         if (!cancelled) {
@@ -145,7 +194,7 @@ export default function MyDocuments({
     return () => {
       cancelled = true;
     };
-  }, [isLoaded, isSignedIn, getToken]);
+  }, [isLoaded, isSignedIn, userId, getToken]);
 
   async function refreshResumes(token: string) {
     const loaded = await apiRequest<ApiResume[]>("/api/resumes", token);
@@ -327,11 +376,28 @@ export default function MyDocuments({
       setRetryDeleteIds((current) =>
         current.filter((id) => id !== resume.id),
       );
+      if (userId) {
+        writePendingResumeDeletions(
+          userId,
+          readPendingResumeDeletions(userId).filter(
+            (pending) => pending.id !== resume.id,
+          ),
+        );
+      }
       setResumeMessage("Resume deleted.");
     } catch (err) {
       setRetryDeleteIds((current) =>
         current.includes(resume.id) ? current : [...current, resume.id],
       );
+      if (userId) {
+        const pending = readPendingResumeDeletions(userId);
+        writePendingResumeDeletions(
+          userId,
+          pending.some((item) => item.id === resume.id)
+            ? pending
+            : [...pending, resume],
+        );
+      }
       setResumeError(
         err instanceof Error
           ? `${err.message} The resume is being kept here so you can retry deletion.`
