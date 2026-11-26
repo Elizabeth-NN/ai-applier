@@ -831,6 +831,7 @@ def start_job_screening(
         select(Resume).where(
             Resume.id == payload.resume_id,
             Resume.user_id == user_id,
+            Resume.deletion_pending.is_(False),
         )
     )
 

@@ -225,6 +225,7 @@ def prepare_application_execution(
         select(Resume).where(
             Resume.id == resume_id,
             Resume.user_id == user_id,
+            Resume.deletion_pending.is_(False),
         )
     )
     if resume is None:

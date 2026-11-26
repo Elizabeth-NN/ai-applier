@@ -39,6 +39,7 @@ def prepare_durable_screening_context(
         select(Resume).where(
             Resume.id == resume_id,
             Resume.user_id == user_id,
+            Resume.deletion_pending.is_(False),
         )
     )
     if resume is None:

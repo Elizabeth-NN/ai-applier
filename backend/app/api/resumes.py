@@ -100,6 +100,7 @@ def get_owned_resume(resume_id: int, user_id: str, db: Session) -> Resume:
         select(Resume).where(
             Resume.id == resume_id,
             Resume.user_id == user_id,
+            Resume.deletion_pending.is_(False),
         )
     )
     if resume is None:
@@ -743,7 +744,10 @@ def list_resumes(
 ):
     resumes = db.scalars(
         select(Resume)
-        .where(Resume.user_id == user_id)
+        .where(
+            Resume.user_id == user_id,
+            Resume.deletion_pending.is_(False),
+        )
         .order_by(Resume.created_at.desc(), Resume.id.desc())
     ).all()
     return [_resume_out(resume) for resume in resumes]
@@ -791,51 +795,69 @@ def delete_resume(
     user_id: CurrentUser,
     db: Session = Depends(get_db),
 ):
-    resume = get_owned_resume(resume_id, user_id, db)
-    content = read_resume_bytes(resume)
-    storage_key = resume.storage_key
-    content_type = resume.content_type
+    # Include pending records so a repeated DELETE can finish interrupted cleanup.
+    resume = db.scalar(
+        select(Resume).where(
+            Resume.id == resume_id,
+            Resume.user_id == user_id,
+        )
+    )
+    if resume is None:
+        raise HTTPException(status_code=404, detail="Resume not found")
 
+    storage_key = resume.storage_key
+
+    # Persist intent before touching storage. If commit outcome is uncertain,
+    # leave the object untouched; a retry will inspect the persisted state.
+    if not resume.deletion_pending:
+        resume.deletion_pending = True
+        try:
+            db.commit()
+        except Exception as exc:
+            db.rollback()
+            logger.exception(
+                "Could not mark resume for deletion (resume_id=%s)",
+                resume_id,
+            )
+            raise HTTPException(
+                500,
+                "Resume deletion could not be started. Please retry.",
+            ) from exc
+
+    # Storage deletion is idempotent, so this is safe on every retry.
     try:
         resume_storage.delete_resume(
             storage_key,
             local_dir=STORAGE_DIR,
         )
     except Exception as exc:
+        logger.exception(
+            "Resume storage cleanup failed; deletion remains pending "
+            "(resume_id=%s)",
+            resume_id,
+        )
         raise HTTPException(
             500,
-            "Resume file could not be removed. The resume record was retained; please retry.",
+            "Resume deletion is pending because its stored file could not "
+            "be removed. Please retry.",
         ) from exc
 
+    # If this commit fails or its outcome is uncertain, the separately
+    # committed pending marker remains available for another DELETE attempt.
     try:
         db.delete(resume)
         db.commit()
     except Exception as exc:
         db.rollback()
-
-        try:
-            resume_storage.put_resume(
-                storage_key,
-                content,
-                content_type=content_type,
-                local_dir=STORAGE_DIR,
-            )
-        except Exception as restore_exc:
-            logger.exception(
-                "Failed to restore resume storage after database deletion failure "
-                "(resume_id=%s)",
-                resume_id,
-            )
-            raise HTTPException(
-                500,
-                "Resume deletion failed and its stored file could not be restored. "
-                "Please contact support.",
-            ) from restore_exc
-
+        logger.exception(
+            "Could not finalize resume deletion; retry is safe "
+            "(resume_id=%s)",
+            resume_id,
+        )
         raise HTTPException(
             500,
-            "Resume could not be deleted from the database. "
-            "Its stored file was restored; please retry.",
+            "Resume file cleanup succeeded, but deletion could not be finalized. "
+            "Please retry.",
         ) from exc
 
     return None
