@@ -125,6 +125,7 @@ export default function MyDocuments({
 
     if (!isLoaded || !isSignedIn || !userId) return;
 
+    const activeUserId = userId;
     let cancelled = false;
 
     async function loadDocuments() {
@@ -162,7 +163,7 @@ export default function MyDocuments({
         );
 
         if (!cancelled) {
-          const pendingDeletions = readPendingResumeDeletions(userId);
+          const pendingDeletions = readPendingResumeDeletions(activeUserId);
           const visibleResumes = [
             ...loadedResumes,
             ...pendingDeletions.filter(
@@ -352,7 +353,7 @@ export default function MyDocuments({
       }
 
       const response = await fetch(
-        `${apiUrl.replace(/\\/$/, "")}/api/resumes/${resume.id}`,
+        `${apiUrl.replace(/\/$/, "")}/api/resumes/${resume.id}`,
         {
           method: "DELETE",
           headers: { Authorization: `Bearer ${token}` },
