@@ -75,6 +75,7 @@ export default function MyDocuments({
   const [resumes, setResumes] = useState<ApiResume[]>([]);
   const [uploading, setUploading] = useState(false);
   const [resumeActionId, setResumeActionId] = useState<number | null>(null);
+  const [retryDeleteIds, setRetryDeleteIds] = useState<number[]>([]);
   const [resumeError, setResumeError] = useState("");
   const [resumeMessage, setResumeMessage] = useState("");
   const [loading, setLoading] = useState(true);
@@ -273,8 +274,16 @@ export default function MyDocuments({
     }
   }
 
-  async function handleResumeDelete(resume: ApiResume) {
-    if (!window.confirm(`Delete "${resume.original_filename}"? This cannot be undone.`)) {
+  async function handleResumeDelete(
+    resume: ApiResume,
+    isRetry = false,
+  ) {
+    if (
+      !isRetry &&
+      !window.confirm(
+        `Delete "${resume.original_filename}"? This cannot be undone.`,
+      )
+    ) {
       return;
     }
 
@@ -294,14 +303,16 @@ export default function MyDocuments({
       }
 
       const response = await fetch(
-        `${apiUrl.replace(/\/$/, "")}/api/resumes/${resume.id}`,
+        `${apiUrl.replace(/\\/$/, "")}/api/resumes/${resume.id}`,
         {
           method: "DELETE",
           headers: { Authorization: `Bearer ${token}` },
         },
       );
 
-      if (!response.ok) {
+      // A retry may receive 404 if an earlier request completed but its
+      // response was lost. The resume is already gone in that case.
+      if (!response.ok && !(isRetry && response.status === 404)) {
         const data = await response.json().catch(() => null);
         throw new Error(
           data && typeof data.detail === "string"
@@ -310,11 +321,21 @@ export default function MyDocuments({
         );
       }
 
-      await refreshResumes(token);
+      setResumes((current) =>
+        current.filter((item) => item.id !== resume.id),
+      );
+      setRetryDeleteIds((current) =>
+        current.filter((id) => id !== resume.id),
+      );
       setResumeMessage("Resume deleted.");
     } catch (err) {
+      setRetryDeleteIds((current) =>
+        current.includes(resume.id) ? current : [...current, resume.id],
+      );
       setResumeError(
-        err instanceof Error ? err.message : "Could not delete the resume.",
+        err instanceof Error
+          ? `${err.message} The resume is being kept here so you can retry deletion.`
+          : "Could not delete the resume. It is being kept here so you can retry.",
       );
     } finally {
       setResumeActionId(null);
@@ -432,10 +453,19 @@ export default function MyDocuments({
                   <button
                     type="button"
                     disabled={resumeActionId !== null}
-                    onClick={() => void handleResumeDelete(resume)}
+                    onClick={() =>
+                      void handleResumeDelete(
+                        resume,
+                        retryDeleteIds.includes(resume.id),
+                      )
+                    }
                     className="rounded-lg border border-red-200 px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-50 disabled:opacity-50"
                   >
-                    Delete
+                    {resumeActionId === resume.id
+                      ? "Deleting..."
+                      : retryDeleteIds.includes(resume.id)
+                        ? "Retry deletion"
+                        : "Delete"}
                   </button>
                 </div>
               </li>
