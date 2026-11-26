@@ -164,7 +164,7 @@ def test_delete_removes_record_and_file(resume_context):
     assert client.get("/api/resumes").json() == []
 
 
-def test_delete_storage_failure_preserves_resume_record_and_file(
+def test_delete_storage_failure_leaves_pending_record_and_retry_recovers(
     resume_context, monkeypatch
 ):
     client = resume_context["client"]
@@ -177,6 +177,7 @@ def test_delete_storage_failure_preserves_resume_record_and_file(
         storage_key = record.storage_key
 
     stored_path = resume_context["storage"] / storage_key
+    original_delete = resumes_api.resume_storage.delete_resume
 
     def fail_delete(*args, **kwargs):
         raise OSError("Simulated storage outage")
@@ -187,18 +188,30 @@ def test_delete_storage_failure_preserves_resume_record_and_file(
 
     assert response.status_code == 500
     assert stored_path.is_file()
+    assert client.get("/api/resumes").json() == []
 
     with resume_context["factory"]() as db:
-        assert db.get(Resume, resume_id) is not None
+        record = db.get(Resume, resume_id)
+        assert record is not None
+        assert record.deletion_pending is True
 
-    assert len(client.get("/api/resumes").json()) == 1
+    monkeypatch.setattr(
+        resumes_api.resume_storage, "delete_resume", original_delete
+    )
+
+    retry = client.delete(f"/api/resumes/{resume_id}")
+    assert retry.status_code == 204
+    assert not stored_path.exists()
+
+    with resume_context["factory"]() as db:
+        assert db.get(Resume, resume_id) is None
 
 
-def test_delete_database_commit_failure_restores_file_and_keeps_record(
+def test_delete_first_database_commit_failure_keeps_file_and_record(
     resume_context, monkeypatch
 ):
     client = resume_context["client"]
-    content = b"%PDF-1.7\\nrestore"
+    content = b"%PDF-1.7\nrestore"
     created = upload(client, "restore.pdf", content)
     assert created.status_code == 201
     resume_id = created.json()["id"]
@@ -218,12 +231,63 @@ def test_delete_database_commit_failure_restores_file_and_keeps_record(
     response = client.delete(f"/api/resumes/{resume_id}")
 
     assert response.status_code == 500
-    assert "restored" in response.json()["detail"]
+    assert "could not be started" in response.json()["detail"]
     assert stored_path.is_file()
     assert stored_path.read_bytes() == content
 
     with resume_context["factory"]() as db:
-        assert db.get(Resume, resume_id) is not None
+        record = db.get(Resume, resume_id)
+        assert record is not None
+        assert record.deletion_pending is False
+
+
+def test_delete_final_database_commit_failure_leaves_pending_record_and_retries(
+    resume_context, monkeypatch
+):
+    client = resume_context["client"]
+    created = upload(client, "finalize.pdf", b"%PDF-1.7\nfinalize")
+    assert created.status_code == 201
+    resume_id = created.json()["id"]
+
+    with resume_context["factory"]() as db:
+        record = db.get(Resume, resume_id)
+        storage_key = record.storage_key
+
+    stored_path = resume_context["storage"] / storage_key
+    original_commit = resumes_api.Session.commit
+    commit_calls = 0
+
+    def fail_second_commit(self):
+        nonlocal commit_calls
+        commit_calls += 1
+        if commit_calls == 2:
+            raise RuntimeError("Simulated final database commit failure")
+        return original_commit(self)
+
+    monkeypatch.setattr(resumes_api.Session, "commit", fail_second_commit)
+
+    response = client.delete(f"/api/resumes/{resume_id}")
+
+    assert response.status_code == 500
+    assert "could not be finalized" in response.json()["detail"]
+    assert not stored_path.exists()
+    assert client.get("/api/resumes").json() == []
+    assert commit_calls == 2
+
+    with resume_context["factory"]() as db:
+        record = db.get(Resume, resume_id)
+        assert record is not None
+        assert record.deletion_pending is True
+
+    monkeypatch.setattr(resumes_api.Session, "commit", original_commit)
+
+    retry = client.delete(f"/api/resumes/{resume_id}")
+    assert retry.status_code == 204
+    assert not stored_path.exists()
+
+    with resume_context["factory"]() as db:
+        assert db.get(Resume, resume_id) is None
+
 
 def test_upload_database_and_storage_cleanup_failure_logs_orphan(
     resume_context, monkeypatch, caplog
