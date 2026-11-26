@@ -786,9 +786,6 @@ def delete_resume(
 ):
     resume = get_owned_resume(resume_id, user_id, db)
 
-    db.delete(resume)
-    db.commit()
-
     try:
         resume_storage.delete_resume(
             resume.storage_key,
@@ -797,7 +794,10 @@ def delete_resume(
     except Exception as exc:
         raise HTTPException(
             500,
-            "Resume record was deleted, but its stored file could not be removed.",
+            "Resume file could not be removed. The resume record was retained; please retry.",
         ) from exc
+
+    db.delete(resume)
+    db.commit()
 
     return None

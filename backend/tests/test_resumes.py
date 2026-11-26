@@ -162,3 +162,34 @@ def test_delete_removes_record_and_file(resume_context):
     assert response.status_code == 204
     assert not stored_path.exists()
     assert client.get("/api/resumes").json() == []
+
+
+def test_delete_storage_failure_preserves_resume_record_and_file(
+    resume_context, monkeypatch
+):
+    client = resume_context["client"]
+    created = upload(client, "keep.pdf", b"%PDF-1.7\\nkeep")
+    assert created.status_code == 201
+    resume_id = created.json()["id"]
+
+    with resume_context["factory"]() as db:
+        record = db.get(Resume, resume_id)
+        storage_key = record.storage_key
+
+    stored_path = resume_context["storage"] / storage_key
+
+    def fail_delete(*args, **kwargs):
+        raise OSError("Simulated storage outage")
+
+    monkeypatch.setattr(resumes_api.resume_storage, "delete_resume", fail_delete)
+
+    response = client.delete(f"/api/resumes/{resume_id}")
+
+    assert response.status_code == 500
+    assert stored_path.is_file()
+
+    with resume_context["factory"]() as db:
+        assert db.get(Resume, resume_id) is not None
+
+    assert len(client.get("/api/resumes").json()) == 1
+\n
